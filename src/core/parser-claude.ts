@@ -210,6 +210,11 @@ function getClaudeUserText(line: ClaudeLine): string {
     .join('\n');
 }
 
+function countClaudeImages(line: ClaudeLine): number {
+  return toContentArray(line.message?.content)
+    .filter(block => block.type === 'image').length;
+}
+
 function applyClaudeToolBlock(
   block: ClaudeContentBlock,
   data: Pick<ClaudeAssistantData, 'toolsUsed' | 'editedFiles' | 'referencedFiles'>,
@@ -571,6 +576,7 @@ function buildClaudeRequest(
   requestIndex: number,
 ): SessionRequest {
   const hasAnyTokens = assistantData.assistantCount > 0;
+  const imageCount = countClaudeImages(line);
   return createRequest({
     requestId: line.uuid || `claude-${requestIndex}`,
     timestamp: userTs,
@@ -582,6 +588,7 @@ function buildClaudeRequest(
     toolsUsed: assistantData.toolsUsed,
     editedFiles: [...new Set(assistantData.editedFiles)],
     referencedFiles: [...new Set(assistantData.referencedFiles)],
+    variableKinds: imageCount > 0 ? { image: imageCount } : {},
     totalElapsed: userTs && assistantData.lastTs ? assistantData.lastTs - userTs : null,
     promptTokens: hasAnyTokens ? assistantData.totalInputTokens : null,
     completionTokens: hasAnyTokens ? assistantData.totalOutputTokens : null,

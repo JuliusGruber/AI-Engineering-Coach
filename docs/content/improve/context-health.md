@@ -33,7 +33,7 @@ Each signal contributes points to the overall score.
 
 ### Context Provision by Harness
 
-A table shows how context is provided across each harness (VS Code, Claude Code, etc.), including:
+A table shows how context is provided across each harness (VS Code, Claude, etc.), including:
 
 - Request count
 - File reference percentage

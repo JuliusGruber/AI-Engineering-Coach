@@ -51,6 +51,7 @@ import type {
 import type { ConfigHealthData } from './config-types';
 import type { InsightsData } from './insights-types';
 import type { ContextManagementData, FlowStateData, WorkspaceContextSessionsData } from './context-types';
+import type { ImageGalleryData } from '../analyzer-images';
 
 /* RPC method map: method name -> { params, result } */
 export interface RpcMethodMap {
@@ -85,6 +86,8 @@ export interface RpcMethodMap {
   getContextRangeAvailability: { params: { filter?: DateFilter } | undefined; result: { rangesWithTokens: number[]; matchingSessions: number; sessionsWithRequestTokens: number; harnessesWithoutRequestTokens: string[] } };
   getCalendarActivity: { params: DateFilter | undefined; result: CalendarActivityData };
   getProjectOverview: { params: DateFilter | undefined; result: ProjectOverviewData };
+  getImageGallery: { params: DateFilter | undefined; result: ImageGalleryData };
+  getSessionImages: { params: { sessionId: string; requestId: string }; result: { images: string[] } };
   getRuleEditor: { params: DateFilter | Record<string, unknown>; result: unknown };
   getRulePreview: { params: Record<string, unknown>; result: unknown };
   getRuleSource: { params: { ruleId: string }; result: { source: string } };

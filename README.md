@@ -24,10 +24,10 @@ https://github.com/user-attachments/assets/d60203ce-c678-4fdd-918e-f6c04bff04df
 
 AI Engineer Coach reads your local AI session logs and turns them into actionable insights — no data leaves your machine.
 
-- **Track progress** — practice scores, weekly trends, daily activity charts
-- **Detect anti-patterns** — 45 rules across prompt quality, session hygiene, code review, and tool mastery
-- **Control costs** — per-model multipliers, cumulative usage, budget projections
-- **Discover skills** — find repeated prompts and turn them into reusable skills
+- **Track progress** -- practice scores, weekly trends, daily activity charts
+- **Detect anti-patterns** -- 45 rules across prompt quality, session hygiene, code review, tool mastery, and context management
+- **Measure output** -- AI-generated code volume by language, workspace, model, and harness
+- **Discover skills** -- find repeated prompts and turn them into reusable skills
 - **Score context health** — agentic readiness checks, instruction-file audits, workspace context maps
 
 <details>
@@ -79,20 +79,21 @@ code --install-extension ai-engineer-coach-*.vsix
 |------|-------------|
 | **Dashboard** | Practice scores with week-over-week trends, daily activity chart, top workspace stats |
 | **Timeline** | Gantt-style session timeline with per-day drill-down and overlap detection |
+| **Coding Moments** | Screenshot gallery from AI coding sessions with story reels and workspace filtering |
 
 ### Measure
 
 | Page | Description |
 |------|-------------|
-| **Output** | Generated code volume by language, premium request trends by model, AI credit spend with token breakdown |
-| **Burndown** | Monthly AI credit budget progress with projections for Pro, Pro+, Business, and Enterprise plans |
+| **Output** | Generated code volume by language, model usage table *(token breakdown temporarily hidden)* |
+| **Burndown** | Monthly AI token budget progress with projections *(temporarily disabled)* |
 | **Patterns** | 7×24 activity heatmap and work-life balance signals |
 
 ### Improve
 
 | Page | Description |
 |------|-------------|
-| **Anti-Patterns** | Four practice score cards with severity ratings, concrete actions, and example prompts. 45 editable markdown rules plus a coverage heatmap |
+| **Anti-Patterns** | Five practice score cards with severity ratings, concrete actions, and example prompts. 45 editable markdown rules plus a coverage heatmap |
 | **Rule Editor** | Create, edit, and tune detection rules visually or as raw markdown. Live-test against your data |
 | **Rule Playground** | Interactive REPL for the rule DSL with field browser, function catalog, and metric list |
 | **Data Explorer** | Browse session fields, view distributions, run ad-hoc filters |

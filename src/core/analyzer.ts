@@ -25,6 +25,7 @@ import { ConfigAnalyzer } from './analyzer-config';
 import { FlowAnalyzer } from './analyzer-flow';
 import { ContextAnalyzer } from './analyzer-context';
 import { InsightsAnalyzer } from './analyzer-insights';
+import { ImageAnalyzer, ImageGalleryData } from './analyzer-images';
 import { AnalyzerBase } from './analyzer-base';
 import { errorCore, infoCore, warnCore } from './log';
 
@@ -39,6 +40,7 @@ export class Analyzer {
   private readonly insights: InsightsAnalyzer;
   private readonly flow: FlowAnalyzer;
   private readonly context: ContextAnalyzer;
+  private readonly images: ImageAnalyzer;
   private readonly sessions: Session[];
   private readonly editLocIndex: Map<string, Map<string, number>>;
   private readonly workspaces: Map<string, Workspace>;
@@ -60,6 +62,7 @@ export class Analyzer {
     this.insights = new InsightsAnalyzer(sessions, elIdx, sharedMap);
     this.flow = new FlowAnalyzer(sessions, elIdx, sharedMap);
     this.context = new ContextAnalyzer(sessions, elIdx, sharedMap);
+    this.images = new ImageAnalyzer(sessions, elIdx, sharedMap);
   }
 
   private getCached<T>(key: string, filter: DateFilter | undefined, compute: () => T): T {
@@ -243,6 +246,8 @@ export class Analyzer {
   }
 
   getCalendarActivity(f?: DateFilter): CalendarActivityData { return this.dashboard.getCalendarActivity(f); }
+
+  getImageGallery(f?: DateFilter): ImageGalleryData { return this.images.getImageGallery(f); }
 
   getStats(f?: DateFilter): StatsResult {
     return this.getCached('getStats', f, () => this.dashboard.getStats(f));

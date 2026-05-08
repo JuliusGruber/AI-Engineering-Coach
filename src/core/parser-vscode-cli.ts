@@ -41,6 +41,7 @@ interface TurnState {
   isCanceled: boolean;
   compaction: CompactionEvent | null;
   reasoningEffort: 'max' | 'high' | 'medium' | 'low' | null;
+  imageCount: number;
 }
 
 interface CLIParseState {
@@ -72,6 +73,7 @@ function freshTurn(userMsg: string, userTs: string | null, agentMode: string, re
     isCanceled: false,
     compaction: null,
     reasoningEffort,
+    imageCount: 0,
   };
 }
 
@@ -151,6 +153,7 @@ function flushTurn(state: CLIParseState): void {
     editedFiles: [...turn.editedFiles],
     referencedFiles: [...turn.referencedFiles],
     skillsUsed: [...turn.skillsUsed],
+    variableKinds: turn.imageCount > 0 ? { image: turn.imageCount } : {},
     firstProgress: firstProgress !== null && firstProgress >= 0 ? firstProgress : null,
     totalElapsed: msgTs && respTs ? respTs - msgTs : null,
     completionTokens: turn.totalOutputTokens || null,
@@ -170,6 +173,18 @@ function addAttachmentReferences(turn: TurnState, attachments: unknown): void {
   for (const attachment of recordArrayValue(attachments)) {
     const filePath = attachment.path;
     if (typeof filePath === 'string') turn.referencedFiles.add(filePath);
+    // Count image attachments
+    const mimeType = typeof attachment.mimeType === 'string' ? attachment.mimeType : '';
+    const type = typeof attachment.type === 'string' ? attachment.type : '';
+    if (type === 'image' || mimeType.startsWith('image/')) {
+      turn.imageCount++;
+    }
+  }
+}
+
+function countImageVariables(turn: TurnState, variables: unknown): void {
+  for (const v of recordArrayValue(variables)) {
+    if (v.kind === 'image') turn.imageCount++;
   }
 }
 
@@ -197,6 +212,8 @@ function handleUserMessage(ev: CLIEvent, state: CLIParseState): void {
     state.currentReasoningEffort,
   );
   addAttachmentReferences(state.turn, ev.data?.attachments);
+  // Also count images from variables array (same format as VS Code sessions)
+  countImageVariables(state.turn, ev.data?.variables);
 }
 
 function handleToolExecutionStart(ev: CLIEvent, state: CLIParseState): void {

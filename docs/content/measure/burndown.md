@@ -6,6 +6,8 @@ description: "Track AI credit consumption against your monthly budget"
 
 # Burndown
 
+> **Temporarily disabled.** This feature is disabled until we can verify that reported numbers align with GitHub's billing data. It will be re-enabled once validated.
+
 The Burndown page visualizes your AI credit consumption against your monthly allowance, with support for browsing past months.
 
 ## How It Works

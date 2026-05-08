@@ -12,7 +12,7 @@ The Dashboard is the landing page of AI Engineer Coach. It brings together the m
 
 ## Practice Scores
 
-Four score cards are displayed at the top of the dashboard, each computed from the anti-pattern detection system:
+Five score cards are displayed at the top of the dashboard, each computed from the anti-pattern detection system:
 
 | Score | What it measures |
 |---|---|
@@ -20,6 +20,7 @@ Four score cards are displayed at the top of the dashboard, each computed from t
 | **Session Hygiene** | Whether you start fresh sessions, avoid overly long conversations, and use devcontainers |
 | **Code Review** | How carefully you review, validate, and sandbox AI-generated output |
 | **Tool Mastery** | How broadly you use available AI features (slash commands, plan mode, model selection) |
+| **Context Management** | How efficiently your sessions use the available context window |
 
 Each score ranges from 0 to 100 and includes week-over-week and month-over-month trend indicators. Clicking a card navigates to the detailed Anti-Patterns view for that category.
 
@@ -32,4 +33,4 @@ The dashboard includes an inline preview of the Skill Finder. It scans your prom
 
 ## Daily Activity
 
-A bar chart shows requests, sessions, lines of code, and active workspaces over the selected time range. Tabs let you switch between these metrics. Below the chart, donut charts break down activity by workspace and by harness (VS Code, Claude Code, etc.).
+A bar chart shows requests, sessions, lines of code, and active workspaces over the selected time range. Tabs let you switch between these metrics. Below the chart, donut charts break down activity by workspace and by harness (VS Code, Claude, etc.).

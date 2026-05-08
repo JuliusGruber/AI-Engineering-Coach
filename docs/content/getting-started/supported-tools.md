@@ -20,21 +20,25 @@ The primary harness. AI Engineer Coach parses the chat panel logs that GitHub Co
 - Terminal command execution
 - Turn-by-turn conversation structure
 
-## Claude Code
+## Claude
 
-Parses session files from Anthropic's Claude Code CLI tool. Each session is read as a structured conversation with tool use, file edits, and terminal commands.
+Parses session files from Anthropic's Claude CLI tool. Each session is read as a structured conversation with tool use, file edits, and terminal commands.
 
-## Codex CLI
+## Codex
 
-Reads session history from OpenAI's Codex CLI terminal agent. Captures prompts, completions, and tool interactions.
+Reads session history from OpenAI's Codex terminal agent. Captures prompts, completions, and tool interactions.
 
 ## OpenCode
 
 Parses session logs from the open-source OpenCode terminal tool that supports multiple LLM backends.
 
-## Xcode
+## GitHub Copilot for Xcode
 
-Reads LLM interaction logs from Apple's Xcode development environment.
+Reads Copilot Chat conversation logs from Apple's Xcode IDE. Sessions are parsed from SQLite databases stored in the GitHub Copilot configuration directory.
+
+## GitHub Copilot CLI
+
+Parses session state and history files from the GitHub Copilot CLI terminal agent. Captures prompts, completions, model usage, and per-model token metrics reported at session shutdown.
 
 ## Workspace Filtering
 

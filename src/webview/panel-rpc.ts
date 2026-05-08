@@ -8,6 +8,7 @@
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { loadSessionFromDisk } from '../core/cache';
+import { extractSessionImages } from '../core/parser-vscode-files';
 import { DateFilter, RpcMethodName, BurndownConfig } from '../core/types';
 import type { RpcMethodMap, RpcResult } from '../core/types/rpc-types';
 import {
@@ -37,6 +38,7 @@ import { compileNaturalLanguageRule } from '../core/rule-compiler';
 import type { SessionRequest, Session } from '../core/types';
 import { errorResult, isString, isNumber, isOptionalString, isRecord } from './panel-shared';
 import { DSL_CHEATSHEET } from './dsl-cheatsheet';
+import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
 
 /**
  * Pick `reqs` or `sessions` based on scope and return them typed as
@@ -635,17 +637,17 @@ const rpcHandlers: TypedRpcHandlers = {
   getHourlyDistribution: (a, _p, params) => a.getHourlyDistribution(validateDateFilter(params)),
   getHeatmap: (a, _p, params) => a.getHeatmap(validateDateFilter(params)),
   getCodeProduction: (a, _p, params) => a.getCodeProduction(validateDateFilter(params)),
-  getConsumption: (a, _p, params) => a.getConsumption(validateDateFilter(params)),
-  getBurndown: (a, _p, params) => a.getBurndown(
+  getConsumption: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getConsumption(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
+  getBurndown: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getBurndown(
     validateBurndownConfig(params?.config),
     isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined,
-  ),
-  getAiCredits: (a, _p, params) => a.getAiCredits(validateDateFilter(params)),
-  getAiCreditBurndown: (a, _p, params) => a.getAiCreditBurndown(
+  ) : errorResult('Token reporting is temporarily disabled'),
+  getAiCredits: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getAiCredits(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
+  getAiCreditBurndown: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getAiCreditBurndown(
     validateBurndownConfig(params?.config),
     isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined,
-  ),
-  getTokenCoverage: (a, _p, params) => a.getTokenCoverage(validateDateFilter(params)),
+  ) : errorResult('Token reporting is temporarily disabled'),
+  getTokenCoverage: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getTokenCoverage(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
   getDayTimeline: (a, _p, params) => a.getDayTimeline(
     isOptionalString(params?.date) ? params.date : undefined,
     isOptionalString(params?.mode) ? params.mode : undefined,
@@ -694,6 +696,15 @@ const rpcHandlers: TypedRpcHandlers = {
   getContextRangeAvailability: (a, _p, params) => a.getContextRangeAvailability(validateDateFilter(isRecord(params?.filter) ? params.filter : params)),
   getCalendarActivity: (a, _p, params) => a.getCalendarActivity(validateDateFilter(params)),
   getProjectOverview: (a, _p, params) => a.getProjectOverview(validateDateFilter(params)),
+  getImageGallery: (a, _p, params) => a.getImageGallery(validateDateFilter(params)),
+  getSessionImages: (_a, p, params) => {
+    const sessionId = isString(params?.sessionId) ? params.sessionId : '';
+    const requestId = isString(params?.requestId) ? params.requestId : '';
+    if (!sessionId || !requestId) return { images: [] };
+    const source = p.sessionSourceIndex.get(sessionId);
+    if (!source) return { images: [] };
+    return { images: extractSessionImages(source.filePath, requestId) };
+  },
 
   /* ---- Rule Editor methods ---- */
   getRuleEditor: (a, _p, params) => {

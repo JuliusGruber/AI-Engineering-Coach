@@ -20,6 +20,19 @@ import { renderConfigHealth } from './page-config';
 import { renderLevelUp } from './page-experiments';
 import { renderDataExplorer } from './page-data-explorer';
 import { renderRulePlayground } from './page-rule-playground';
+import { renderImageGallery } from './page-image-gallery';
+import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+
+function normalizePageForFeatureFlags(page: string): string {
+  if (!FF_TOKEN_REPORTING_ENABLED && page === 'burndown') return 'dashboard';
+  return page;
+}
+
+/* ---- Feature-flag gating: hide token-reporting nav items ---- */
+if (!FF_TOKEN_REPORTING_ENABLED) {
+  const burndownLink = document.querySelector<HTMLElement>('[data-page="burndown"]');
+  burndownLink?.parentElement?.remove();
+}
 
 /* ---- Global state ---- */
 let currentPage = 'dashboard';
@@ -448,6 +461,7 @@ document.addEventListener('click', (e) => {
 });
 
 export function navigateTo(page: string): void {
+  page = normalizePageForFeatureFlags(page);
   currentPage = page;
   for (const a of $$<HTMLAnchorElement>('.nav-links a')) a.classList.toggle('active', a.dataset.page === page);
   void renderPage(page);
@@ -605,6 +619,8 @@ if (harnessFilter) {
 
 /* ---- Page Router ---- */
 function renderPage(page: string): void {
+  page = normalizePageForFeatureFlags(page);
+  currentPage = page;
   const content = $('#content')!;
   // Unmount the previous Preact tree and clear imperative children (e.g. the
   // loading-screen workspace grid with thousands of cells) so the diff doesn't
@@ -622,7 +638,8 @@ function renderPage(page: string): void {
     case 'dashboard': withErrorBoundary('Dashboard', content, () => renderDashboard(content, currentFilter)); break;
     case 'patterns': withErrorBoundary('Patterns', content, () => renderPatterns(content, currentFilter)); break;
     case 'output': withErrorBoundary('Output', content, () => renderOutput(content, currentFilter)); break;
-    case 'burndown': withErrorBoundary('Burndown', content, () => renderBurndown(content, currentFilter)); break;
+    case 'burndown':
+      withErrorBoundary('Burndown', content, () => renderBurndown(content, currentFilter)); break;
     case 'timeline': withErrorBoundary('Timeline', content, () => renderTimeline(content, currentFilter)); break;
     case 'anti-patterns': withErrorBoundary('Anti-Patterns', content, () => renderAntiPatterns(content, currentFilter)); break;
     case 'rule-editor': withErrorBoundary('Rule Editor', content, () => renderAntiPatterns(content, currentFilter)); break;
@@ -631,6 +648,7 @@ function renderPage(page: string): void {
     case 'level-up': withErrorBoundary('Level Up', content, () => renderLevelUp(content, currentFilter)); break;
     case 'data-explorer': withErrorBoundary('Data Explorer', content, () => renderDataExplorer(content, currentFilter)); break;
     case 'rule-playground': withErrorBoundary('Rule Playground', content, () => renderRulePlayground(content, currentFilter)); break;
+    case 'image-gallery': withErrorBoundary('Image Gallery', content, () => renderImageGallery(content, currentFilter)); break;
     default: render(html`<p>Unknown page</p>`, content);
   }
 }

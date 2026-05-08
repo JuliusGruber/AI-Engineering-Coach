@@ -1922,6 +1922,29 @@ h2 {
   text-decoration: none;
 }
 
+/* Feature-gated notice — shown when a feature is temporarily disabled */
+.feature-gated-notice {
+  margin: 24px auto;
+  max-width: 540px;
+  padding: 24px 28px;
+  text-align: center;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent-orange) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent-orange) 30%, transparent);
+  border-radius: 8px;
+}
+.feature-gated-notice h2 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: var(--accent-orange);
+}
+.feature-gated-notice p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
 /* Aggregated-data badge — value derived from a session-level total
    (not exact per-request data). Yellow/amber to signal "approximate but real". */
 .aggregated-badge {
@@ -2733,6 +2756,35 @@ h2 {
   background: var(--surface, #161b22);
   border-radius: 6px;
   padding: 2px;
+}
+
+/* ── Dashboard Info Banner ─────────────────────────────────────── */
+.dash-info-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-blue) 8%, var(--card-bg, #161b22));
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 25%, var(--border));
+}
+.dash-info-banner .dash-info-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--accent-blue);
+}
+.dash-info-banner strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.dash-info-banner p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* ── Dashboard Hero ────────────────────────────────────────────── */

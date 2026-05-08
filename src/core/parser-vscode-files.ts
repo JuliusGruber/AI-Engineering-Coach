@@ -207,6 +207,140 @@ export function reconstructFromJsonl(fpath: string): Record<string, unknown> | n
   return Object.keys(state).length > 0 ? state : null;
 }
 
+/* ── Lazy image extraction ─────────────────────────────────────── */
+
+/**
+ * Detect MIME type from first bytes of an image.
+ */
+function detectMimeType(first: number[]): string {
+  if (first[0] === 137 && first[1] === 80) return 'image/png';
+  if (first[0] === 255 && first[1] === 216) return 'image/jpeg';
+  if (first[0] === 71 && first[1] === 73) return 'image/gif';
+  if (first[0] === 82 && first[1] === 73) return 'image/webp';
+  return 'image/png'; // fallback
+}
+
+/**
+ * Convert a dict-of-bytes ({"0":137,"1":80,...}) to a base64 data URI.
+ * Returns null if the value isn't a valid byte dict.
+ */
+function byteDictToDataUri(val: unknown): string | null {
+  if (typeof val !== 'object' || val === null || Array.isArray(val)) return null;
+  const dict = val as Record<string, unknown>;
+  const len = Object.keys(dict).length;
+  if (len < 8) return null; // too small to be an image
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    const v = dict[String(i)];
+    if (typeof v !== 'number') return null;
+    bytes[i] = v;
+  }
+  const mime = detectMimeType([bytes[0], bytes[1]]);
+  return `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+}
+
+/**
+ * Convert a numeric byte array [137,80,78,...] to a base64 data URI.
+ */
+function byteArrayToDataUri(arr: number[]): string | null {
+  if (!Array.isArray(arr) || arr.length < 8) return null;
+  const bytes = new Uint8Array(arr);
+  const mime = detectMimeType([bytes[0], bytes[1]]);
+  return `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+}
+
+interface RawImageVariable {
+  kind?: string;
+  value?: unknown;
+  data?: unknown;
+}
+
+interface RawImageRequest {
+  requestId?: string;
+  variableData?: { variables?: RawImageVariable[] };
+}
+
+/**
+ * Extract image data URIs from a list of variables for a given request.
+ */
+function extractImagesFromVariables(variables: RawImageVariable[]): string[] {
+  const images: string[] = [];
+  for (const v of variables) {
+    if (v.kind !== 'image') continue;
+    // Dict-of-bytes format: { "0": 137, "1": 80, ... }
+    const uri = byteDictToDataUri(v.value);
+    if (uri) { images.push(uri); continue; }
+    // Byte-array in data field: [255,216,255,...]
+    if (Array.isArray(v.data)) {
+      const dataUri = byteArrayToDataUri(v.data as number[]);
+      if (dataUri) images.push(dataUri);
+    }
+  }
+  return images;
+}
+
+/**
+ * Extract images from a session file on disk (without stripping image data).
+ * Reads only the raw file and extracts image bytes for the given requestId.
+ * Returns base64 data URIs, max 4 images per request to limit memory.
+ */
+export function extractSessionImages(filePath: string, requestId: string): string[] {
+  try {
+    assertTrustedPath(filePath);
+    const raw = fs.readFileSync(filePath, 'utf-8');
+
+    if (filePath.endsWith('.jsonl')) {
+      return extractImagesFromJsonl(raw, requestId);
+    }
+    return extractImagesFromJson(raw, requestId);
+  } catch (e) {
+    debugCore('image-extract', `Failed to extract images from ${filePath}`, e);
+    return [];
+  }
+}
+
+function extractImagesFromJson(raw: string, requestId: string): string[] {
+  // Parse without stripping to preserve image data
+  const data = JSON.parse(raw) as { requests?: RawImageRequest[] };
+  const requests = data.requests || [];
+  for (const req of requests) {
+    if (req.requestId !== requestId) continue;
+    const vars = req.variableData?.variables || [];
+    return extractImagesFromVariables(vars).slice(0, 4);
+  }
+  return [];
+}
+
+function extractImagesFromJsonl(raw: string, requestId: string): string[] {
+  // JSONL: scan lines without stripping to find the request
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Quick check: skip lines that don't contain our requestId
+    if (!trimmed.includes(requestId)) continue;
+
+    const entry = JSON.parse(trimmed) as { kind: number; k?: PathKey[]; v?: unknown };
+
+    if (entry.kind === 0) {
+      // Initial state — look in requests array
+      const state = (entry.v || {}) as { requests?: RawImageRequest[] };
+      for (const req of (state.requests || [])) {
+        if (req.requestId !== requestId) continue;
+        return extractImagesFromVariables(req.variableData?.variables || []).slice(0, 4);
+      }
+    } else if (entry.kind === 2) {
+      // Append to requests — v is array of request objects
+      const items = entry.v as RawImageRequest[];
+      if (!Array.isArray(items)) continue;
+      for (const req of items) {
+        if (req.requestId !== requestId) continue;
+        return extractImagesFromVariables(req.variableData?.variables || []).slice(0, 4);
+      }
+    }
+  }
+  return [];
+}
+
 export function parseWorkspaceName(wsJsonPath: string): string {
   try {
     const location = workspaceLocationFromJson(wsJsonPath);

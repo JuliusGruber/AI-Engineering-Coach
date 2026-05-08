@@ -122,3 +122,6 @@ export const CONTEXT_GROWING_SESSION_GROWTH_RATE = 0.8;   // 80%+ sequential inc
 
 /* ---- Token data quality cutoff ---- */
 export const TOKEN_DATA_AVAILABLE_FROM = '2026-04-01';
+
+/* ---- Feature flags ---- */
+export const FF_TOKEN_REPORTING_ENABLED = false;

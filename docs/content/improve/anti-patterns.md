@@ -21,7 +21,7 @@ Anti-pattern detection is powered by an editable rule engine. Every detector is 
 
 ## Score Categories
 
-Four practice categories are evaluated, each scored from 0 to 100:
+Five practice categories are evaluated, each scored from 0 to 100:
 
 ### Prompt Quality
 
@@ -55,6 +55,14 @@ Evaluates how broadly you use available features:
 - **No Slash Commands / No Plan Mode / Agentic No Tools** -- Underused productivity features
 - **Premium Waste / Model Overreliance** -- Using expensive models for simple questions
 - **No Skills / No Custom Instructions** -- Gaps in your context-engineering setup
+
+### Context Management
+
+Evaluates how efficiently your sessions use the context window:
+
+- **Context Window Saturation** -- Sessions where the context window is nearly full
+- **Compaction Storms** -- Frequent auto-compactions indicating sessions that run too long
+- **Runaway Growth** -- Context size growing steadily without resolution
 
 ## Findings
 
