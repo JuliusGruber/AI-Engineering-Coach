@@ -197,6 +197,9 @@ export async function renderConfigHealth(container: HTMLElement, currentFilter: 
 
   const effectiveFilter = buildRangeFilter();
 
+  // Show loading spinner while sub-tab data is fetched
+  render(html`<div class="loading-spinner" style="margin:40px auto;"></div>`, contentEl);
+
   if (activeSubTab === 'context-mgmt') {
     await renderContextManagement(contentEl, effectiveFilter);
   } else {

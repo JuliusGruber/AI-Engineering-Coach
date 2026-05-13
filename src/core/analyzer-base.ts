@@ -66,7 +66,7 @@ export class AnalyzerBase {
       if (!this.matchesWorkspaceFilter(s, f?.workspaceId)) return false;
       if (f?.harness && s.harness !== f.harness) return false;
       const ts = s.lastMessageDate || s.creationDate;
-      if (ts == null) return false;
+      if (ts == null || ts <= 0) return false;
       const d = toDateStr(ts);
       if (f?.fromDate && d < f.fromDate) return false;
       if (f?.toDate && d > f.toDate) return false;

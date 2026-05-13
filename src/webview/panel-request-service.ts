@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { fileUriToPath } from '../core/helpers';
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { readFileSafe } from '../core/parser-shared';
@@ -999,7 +1000,7 @@ ${contextSection}`;
       const data = readJsonRecord(wsJson);
       if (data) {
         const raw = isString(data.folder) ? data.folder : isString(data.workspace) ? data.workspace : '';
-        const decoded = decodeURIComponent(raw.replace(/^file:\/\//, '')).replace(/\/+$/, '');
+        const decoded = fileUriToPath(raw).replace(/\/+$/, '');
         if (decoded && fs.existsSync(decoded)) return decoded;
       }
     } catch {
@@ -1011,7 +1012,7 @@ ${contextSection}`;
       const yamlText = fs.readFileSync(wsYaml, 'utf-8');
       const folderMatch = yamlText.match(/folder:\s*['"]?([^'"\n]+)/);
       if (folderMatch) {
-        const decoded = decodeURIComponent(folderMatch[1].replace(/^file:\/\//, '')).replace(/\/+$/, '');
+        const decoded = fileUriToPath(folderMatch[1]).replace(/\/+$/, '');
         if (fs.existsSync(decoded)) return decoded;
       }
     } catch {

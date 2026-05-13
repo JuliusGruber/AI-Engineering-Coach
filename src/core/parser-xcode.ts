@@ -16,6 +16,7 @@ import * as path from 'path';
 import { execFileSync, execFile } from 'child_process';
 import { Session, SessionRequest } from './types';
 import { assertTrustedPath, extractCodeBlocks, createRequest, createSession, detectDevcontainerFromRequests } from './parser-shared';
+import { fileUriToPath } from './helpers';
 
 /* ---- Directory discovery ---- */
 
@@ -198,7 +199,7 @@ function extractEditedFiles(assistantData: XcodeAssistantData | null): string[] 
     for (const fileEdit of assistantData.fileEdits) {
       const fp = fileEdit.filePath
         || (typeof fileEdit.fileURL === 'string'
-          ? fileEdit.fileURL.replace(/^file:\/\//, '')
+          ? fileUriToPath(fileEdit.fileURL)
           : '');
       if (fp) editedFiles.push(fp);
     }

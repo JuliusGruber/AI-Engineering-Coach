@@ -127,8 +127,8 @@ export async function renderPatterns(container: HTMLElement, currentFilter: Date
         <div class="heatmap-container" id="heatmapGrid"></div>
         ${wlb ? html`
         <div class="two-col" style="margin-top:12px;">
-          <${CanvasEl} id="wlbHoursChart" height=${220} />
-          <${CanvasEl} id="wlbWeeklyChart" height=${220} />
+          <div class="chart-wrap"><div class="chart-title">Hourly Activity <span class="info-icon" tabindex="0" role="button" aria-label="Hourly activity info">${'\u24d8'}<span class="info-popup">Compares your AI assistant usage by hour of the day on weekdays vs. weekends. Helps identify your most productive coding hours.</span></span></div><${CanvasEl} id="wlbHoursChart" height=${220} /></div>
+          <div class="chart-wrap"><div class="chart-title">Weekly Trend <span class="info-icon" tabindex="0" role="button" aria-label="Weekly trend info">${'\u24d8'}<span class="info-popup info-popup-right">Shows your weekly AI assistant request volume split by weekday and weekend. Useful for spotting changes in work cadence over time.</span></span></div><${CanvasEl} id="wlbWeeklyChart" height=${220} /></div>
         </div>` : null}
       </div>
     `, panel);

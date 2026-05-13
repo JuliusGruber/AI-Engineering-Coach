@@ -8,6 +8,21 @@
 import { WorkType } from './types';
 import { MODEL_MULTIPLIERS, MODEL_TOKEN_RATES } from './constants';
 
+/* ---- File-URI helper ---- */
+/**
+ * Convert a `file://` URI to a local filesystem path, handling Windows drive-letter
+ * URIs (e.g. `file:///C:/Users/...`) correctly.  Falls back to decodeURIComponent
+ * stripping for non-URI strings so callers don't need to branch.
+ */
+export function fileUriToPath(raw: string): string {
+  if (!raw.startsWith('file://')) return decodeURIComponent(raw);
+  // Strip scheme: file:///C:/foo → /C:/foo   file:///home/u → /home/u
+  let p = decodeURIComponent(raw.replace(/^file:\/\//, ''));
+  // On Windows the URI has an extra leading slash before the drive letter: /C:/...
+  if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
+  return p;
+}
+
 /* ---- Date helpers ---- */
 export function toDateStr(ts: number): string {
   const d = new Date(ts);

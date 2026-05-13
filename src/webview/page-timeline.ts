@@ -99,7 +99,7 @@ export async function renderTimeline(container: HTMLElement, currentFilter: Date
 
     render(html`
       <span id="timelineActiveDate" class="timeline-active-date">${activeDateLabel}</span>
-      <div id="timelineStrip" class="timeline-strip"></div>
+      <div class="timeline-strip-wrap" id="timelineStripWrap"><div id="timelineStrip" class="timeline-strip"></div></div>
       <div class="timeline-stats" id="timelineStats">
         <span>${tl.sessionCount} sessions</span>
         <span>${totalReqs} requests</span>
@@ -170,6 +170,13 @@ export async function renderTimeline(container: HTMLElement, currentFilter: Date
         strip.scrollLeft += delta * 3;
       }, { passive: false });
 
+      const wrap = document.getElementById('timelineStripWrap')!;
+      function updateScrollFades(): void {
+        wrap.classList.toggle('can-scroll-left', strip.scrollLeft > 4);
+        wrap.classList.toggle('can-scroll-right', strip.scrollLeft < strip.scrollWidth - strip.clientWidth - 4);
+      }
+      strip.addEventListener('scroll', updateScrollFades, { passive: true });
+
       requestAnimationFrame(() => {
         if (activeCard) {
           const cardCenter = activeCard.offsetLeft + activeCard.offsetWidth / 2;
@@ -177,6 +184,7 @@ export async function renderTimeline(container: HTMLElement, currentFilter: Date
         } else {
           strip.scrollLeft = strip.scrollWidth;
         }
+        updateScrollFades();
       });
     }
 

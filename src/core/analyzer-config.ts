@@ -18,7 +18,6 @@ import { toDateStr } from './helpers';
 import { AnalyzerBase } from './analyzer-base';
 import {
   resolveWorkspaceRoot,
-  isCloudPath,
   scanConfigFiles,
   scanPersonalSkillFiles,
   analyzeHookCoverage,
@@ -98,7 +97,6 @@ export class ConfigAnalyzer extends AnalyzerBase {
   ): { kind: 'resolved'; rootPath: string; isClaudeWorkspace: boolean; harness: string } | { kind: 'unresolved' } | null {
     const rootPath = resolveWorkspaceRoot(wsId, ws);
     if (!rootPath) return f?.workspaceId ? { kind: 'unresolved' } : null;
-    if (isCloudPath(rootPath)) return null;
 
     const isClaudeWorkspace = wsId.startsWith('claude-');
     const harness = activity?.harness || (isClaudeWorkspace ? 'Claude Code' : 'Local Agent');

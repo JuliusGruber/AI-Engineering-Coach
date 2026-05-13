@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigFileInfo, HookCoverageInfo, Workspace } from './types';
+import { fileUriToPath } from './helpers';
 import {
   OVERSIZED_INSTRUCTION_LINES, COPILOT_INSTRUCTION_MAX_CHARS,
   CLAUDE_MD_RECOMMENDED_LINES,
@@ -86,7 +87,7 @@ function resolveVsCodeRoot(storagePath: string): string | null {
   const data = readJsonFile(wsJson);
   if (!isRecord(data)) return null;
   const raw = firstStringProperty(data, 'folder', 'workspace');
-  const decoded = decodeURIComponent(raw.replace(/^file:\/\//, '')).replace(/\/+$/, '');
+  const decoded = fileUriToPath(raw).replace(/\/+$/, '');
   return decoded && fs.existsSync(decoded) ? decoded : null;
 }
 

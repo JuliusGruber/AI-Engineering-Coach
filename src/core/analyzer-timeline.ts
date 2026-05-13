@@ -107,7 +107,7 @@ export class TimelineAnalyzer extends AnalyzerBase {
     const activeDates = new Set<string>();
     for (const session of sessions) {
       for (const request of session.requests) {
-        if (request.timestamp != null) activeDates.add(toDateStr(request.timestamp));
+        if (request.timestamp != null && request.timestamp > 0) activeDates.add(toDateStr(request.timestamp));
       }
     }
     return Array.from(activeDates).sort();

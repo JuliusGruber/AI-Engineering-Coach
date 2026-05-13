@@ -7,6 +7,7 @@
 
 import * as fs from 'fs';
 import { assertTrustedPath, prefetchCache } from './parser-shared';
+import { fileUriToPath } from './helpers';
 import { debugCore, warnCore } from './log';
 
 export function readFile(fpath: string): string {
@@ -126,7 +127,7 @@ function workspaceLocationFromJson(wsJsonPath: string): string | null {
       : null;
   if (!rawLocation) return null;
 
-  const decoded = decodeURIComponent(rawLocation.replace(/^file:\/\//, ''));
+  const decoded = fileUriToPath(rawLocation);
   return decoded.replace(/\/+$/, '');
 }
 

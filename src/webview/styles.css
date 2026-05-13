@@ -542,6 +542,7 @@ h2 {
   transform: translateX(-50%);
   z-index: 100;
   width: 300px;
+  max-width: calc(100vw - 32px);
   padding: 10px 12px;
   margin-top: 6px;
   background: var(--bg-card, #21262d);
@@ -556,6 +557,12 @@ h2 {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   white-space: normal;
   pointer-events: none;
+}
+
+.info-popup-right {
+  left: auto;
+  right: 0;
+  transform: none;
 }
 
 .two-col {
@@ -1403,6 +1410,32 @@ h2 {
 }
 
 /* ---- Day Strip ---- */
+.timeline-strip-wrap {
+  position: relative;
+}
+.timeline-strip-wrap::before,
+.timeline-strip-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.timeline-strip-wrap::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg, #1e1e1e), transparent);
+}
+.timeline-strip-wrap::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg, #1e1e1e), transparent);
+}
+.timeline-strip-wrap.can-scroll-left::before { opacity: 1; }
+.timeline-strip-wrap.can-scroll-right::after { opacity: 1; }
+
 .timeline-strip {
   display: flex;
   align-items: flex-end;
@@ -1411,10 +1444,18 @@ h2 {
   overflow-x: auto;
   padding: 8px 0 0;
   margin-bottom: 12px;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
 }
-.timeline-strip::-webkit-scrollbar { display: none; }
+.timeline-strip::-webkit-scrollbar { height: 4px; }
+.timeline-strip::-webkit-scrollbar-track { background: transparent; }
+.timeline-strip::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px;
+}
+.timeline-strip::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.3);
+}
 
 .strip-range-label {
   font-size: 11px;

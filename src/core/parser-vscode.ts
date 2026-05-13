@@ -386,7 +386,7 @@ interface RawRequest {
 
 interface RawVariable {
   kind?: string;
-  value?: string | { path?: string };
+  value?: string | { path?: string; external?: string };
 }
 
 interface RawContentRef {
@@ -522,20 +522,81 @@ function extractCustomInstructions(contentRefs: RawContentRef[] | undefined): st
   return instructions;
 }
 
-function extractSkillsUsed(vdVars: RawVariable[]): string[] {
-  const skills: string[] = [];
+/** Regex to extract the skill directory name from a path ending in `/skills/<name>/SKILL.md`. */
+const SKILL_PATH_RE = /[/\\]skills[/\\]([^/\\]+)[/\\]SKILL\.md$/i;
+
+function extractSkillNameFromPath(rawPath: string): string | null {
+  const m = SKILL_PATH_RE.exec(rawPath);
+  if (!m) return null;
+  const name = m[1].trim();
+  return (name && !name.includes('ai_toolkit')) ? name : null;
+}
+
+/** Extract skill names from legacy inline XML in variable values. */
+function extractSkillsFromXml(vdVars: RawVariable[], skills: Set<string>): void {
   const skillRe = /<skill>\s*<name>(.*?)<\/name>/g;
   for (const v of vdVars) {
     if (typeof v === 'object' && v && typeof v.value === 'string' && v.value.includes('<skill>')) {
       let sm: RegExpExecArray | null;
       while ((sm = skillRe.exec(v.value)) !== null) {
         const sn = sm[1].trim();
-        if (sn && !skills.includes(sn) && !sn.includes('ai_toolkit')) skills.push(sn);
+        if (sn && !sn.includes('ai_toolkit')) skills.add(sn);
       }
       skillRe.lastIndex = 0;
     }
   }
-  return skills;
+}
+
+/** Extract skill names from promptFile variables that point to SKILL.md files. */
+function extractSkillsFromPromptFiles(vdVars: RawVariable[], skills: Set<string>): void {
+  for (const v of vdVars) {
+    if (typeof v !== 'object' || !v || v.kind !== 'promptFile') continue;
+    const val = v.value;
+    if (typeof val !== 'object' || !val) continue;
+    // Try the decoded path first, then the URL-encoded external URI
+    const rawPath = val.path || val.external || '';
+    const name = extractSkillNameFromPath(rawPath);
+    if (name) skills.add(name);
+  }
+}
+
+/** Extract skill names from read_file tool calls that target SKILL.md files. */
+function extractSkillsFromToolCalls(result: RawRequest['result'], skills: Set<string>): void {
+  const resultMeta = (typeof result === 'object' && result ? result.metadata : null) || {};
+  if (typeof resultMeta !== 'object' || !resultMeta) return;
+  const meta = resultMeta;
+  for (const key of ['toolCallResults', 'toolCallRounds']) {
+    const arr = meta[key];
+    if (!Array.isArray(arr)) continue;
+    for (const tcr of arr) {
+      if (typeof tcr !== 'object' || !tcr) continue;
+      const tcrObj = tcr as ToolCallResult;
+      const tcData = parseToolCalls(tcrObj.toolCalls);
+      for (const tc of tcData) {
+        const tool = tc as { name?: string; arguments?: unknown };
+        if (!tool || typeof tool !== 'object') continue;
+        const toolName = tool.name;
+        if (toolName !== 'read_file' && toolName !== 'copilot_readFile' && toolName !== 'readFile') continue;
+        let args = tool.arguments;
+        if (typeof args === 'string') { try { args = JSON.parse(args); } catch { continue; } }
+        if (typeof args !== 'object' || !args) continue;
+        const a = args as Record<string, unknown>;
+        const filePath = (typeof a.filePath === 'string' ? a.filePath : '')
+          || (typeof a.path === 'string' ? a.path : '')
+          || (typeof a.uri === 'string' ? a.uri : '');
+        const name = extractSkillNameFromPath(filePath);
+        if (name) skills.add(name);
+      }
+    }
+  }
+}
+
+function extractSkillsUsed(vdVars: RawVariable[], result: RawRequest['result']): string[] {
+  const skills = new Set<string>();
+  extractSkillsFromXml(vdVars, skills);
+  extractSkillsFromPromptFiles(vdVars, skills);
+  extractSkillsFromToolCalls(result, skills);
+  return [...skills];
 }
 
 function parseToolCalls(toolCalls: unknown, onError?: (error: unknown) => void): unknown[] {
@@ -709,7 +770,7 @@ function extractRequestVariables(req: RawRequest, resp: RawRequest['response'], 
   return {
     variableKinds: extractVariableKinds(vdVars),
     customInstructions: extractCustomInstructions(req.contentReferences),
-    skillsUsed: extractSkillsUsed(vdVars),
+    skillsUsed: extractSkillsUsed(vdVars, result),
     toolsUsed: extractToolsUsed(result),
     editedFiles: extractEditedFiles(req.editedFileEvents),
     referencedFiles: extractReferencedFiles(vdVars),

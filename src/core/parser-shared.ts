@@ -211,9 +211,11 @@ export function createRequest(overrides: Partial<SessionRequest> & Pick<SessionR
   const rawResp = overrides.responseText;
   const msg = compactTextForStorage(rawMsg, MAX_STORED_MESSAGE_CHARS);
   const resp = compactTextForStorage(rawResp, MAX_STORED_RESPONSE_CHARS);
+  const sanitizedTs = (overrides.timestamp != null && overrides.timestamp > 0) ? overrides.timestamp : null;
+  const { timestamp: _ts, ...rest } = overrides;
   return {
     requestId: '',
-    timestamp: null,
+    timestamp: sanitizedTs,
     isCanceled: false,
     agentName: '',
     agentMode: '',
@@ -235,7 +237,7 @@ export function createRequest(overrides: Partial<SessionRequest> & Pick<SessionR
     compaction: null,
     todoSnapshot: null,
     reasoningEffort: null,
-    ...overrides,
+    ...rest,
     messageText: msg,
     responseText: resp,
     messageLength: rawMsg.length,
@@ -249,14 +251,21 @@ export function createRequest(overrides: Partial<SessionRequest> & Pick<SessionR
 /** Creates a Session with sensible defaults; callers only supply non-default fields. */
 export function createSession(overrides: Partial<Session> & Pick<Session, 'sessionId' | 'workspaceId' | 'workspaceName' | 'harness' | 'requests'>): Session {
   const reqs = overrides.requests;
-  const timestamps = reqs.map(r => r.timestamp).filter((t): t is number => t != null);
-  return {
-    location: 'panel',
+  const timestamps = reqs.map(r => r.timestamp).filter((t): t is number => t != null && t > 0);
+  const computed = {
     creationDate: timestamps.length > 0 ? Math.min(...timestamps) : null,
     lastMessageDate: timestamps.length > 0 ? Math.max(...timestamps) : null,
+  };
+  const merged = {
+    location: 'panel' as const,
+    ...computed,
     requestCount: reqs.length,
     ...overrides,
   };
+  // Sanitize session-level timestamps that came from overrides (e.g. raw file data with 0).
+  if (merged.creationDate != null && merged.creationDate <= 0) merged.creationDate = computed.creationDate;
+  if (merged.lastMessageDate != null && merged.lastMessageDate <= 0) merged.lastMessageDate = computed.lastMessageDate;
+  return merged;
 }
 
 const DEVCONTAINER_PATH_RE = /(?:^|[\s=:"'`])\/workspaces\//;

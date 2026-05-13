@@ -509,3 +509,160 @@ describe('scanVsCodeDirs', () => {
     expect(entries).toHaveLength(0);
   });
 });
+
+describe('parseSessionFile — skill detection', () => {
+  it('detects skills from promptFile variables pointing to SKILL.md', () => {
+    const data = {
+      sessionId: 'skill-promptfile',
+      requests: [{
+        requestId: 'r1',
+        timestamp: 1700000001000,
+        message: { text: 'help me' },
+        response: [{ value: 'ok' }],
+        variableData: {
+          variables: [
+            {
+              kind: 'promptFile',
+              value: { path: '/c:/Users/me/.agents/skills/azure-cosmos-py/SKILL.md', external: 'file:///c%3A/Users/me/.agents/skills/azure-cosmos-py/SKILL.md', scheme: 'file' },
+            },
+            {
+              kind: 'promptFile',
+              value: { path: '/c:/Users/me/.claude/skills/browse/SKILL.md', scheme: 'file' },
+            },
+            {
+              kind: 'promptFile',
+              value: { path: '/c:/Users/me/.claude/CLAUDE.md', scheme: 'file' },
+            },
+          ],
+        },
+        result: { metadata: {} },
+      }],
+    };
+    withTempFile('skill-promptfile.json', JSON.stringify(data), (filePath) => {
+      const session = parseSessionFile(filePath, 'ws', 'wp', 'Local Agent (Insiders)');
+      expect(session).not.toBeNull();
+      const skills = session!.requests[0].skillsUsed;
+      expect(skills).toContain('azure-cosmos-py');
+      expect(skills).toContain('browse');
+      expect(skills).not.toContain('CLAUDE.md');
+      expect(skills).toHaveLength(2);
+    });
+  });
+
+  it('detects skills from read_file tool calls targeting SKILL.md', () => {
+    const data = {
+      sessionId: 'skill-toolcall',
+      requests: [{
+        requestId: 'r1',
+        timestamp: 1700000001000,
+        message: { text: 'use the skill' },
+        response: [{ value: 'done' }],
+        result: {
+          metadata: {
+            toolCallRounds: [{
+              toolCalls: [
+                { name: 'read_file', arguments: JSON.stringify({ filePath: 'c:\\Users\\me\\.agents\\skills\\fastapi-router-py\\SKILL.md', startLine: 1, endLine: 50 }) },
+                { name: 'read_file', arguments: JSON.stringify({ filePath: '/src/main.ts', startLine: 1, endLine: 10 }) },
+              ],
+            }],
+          },
+        },
+      }],
+    };
+    withTempFile('skill-toolcall.json', JSON.stringify(data), (filePath) => {
+      const session = parseSessionFile(filePath, 'ws', 'wp', 'Local Agent (Insiders)');
+      expect(session).not.toBeNull();
+      const skills = session!.requests[0].skillsUsed;
+      expect(skills).toContain('fastapi-router-py');
+      expect(skills).toHaveLength(1);
+    });
+  });
+
+  it('deduplicates skills found via both promptFile and tool call', () => {
+    const data = {
+      sessionId: 'skill-dedup',
+      requests: [{
+        requestId: 'r1',
+        timestamp: 1700000001000,
+        message: { text: 'use skill' },
+        response: [{ value: 'done' }],
+        variableData: {
+          variables: [{
+            kind: 'promptFile',
+            value: { path: '/c:/Users/me/.agents/skills/copilot-sdk/SKILL.md', scheme: 'file' },
+          }],
+        },
+        result: {
+          metadata: {
+            toolCallRounds: [{
+              toolCalls: [
+                { name: 'read_file', arguments: JSON.stringify({ filePath: '/c:/Users/me/.agents/skills/copilot-sdk/SKILL.md', startLine: 1, endLine: 100 }) },
+              ],
+            }],
+          },
+        },
+      }],
+    };
+    withTempFile('skill-dedup.json', JSON.stringify(data), (filePath) => {
+      const session = parseSessionFile(filePath, 'ws', 'wp', 'Local Agent (Insiders)');
+      expect(session).not.toBeNull();
+      const skills = session!.requests[0].skillsUsed;
+      expect(skills).toContain('copilot-sdk');
+      expect(skills).toHaveLength(1);
+    });
+  });
+
+  it('still detects skills from legacy inline XML', () => {
+    const skillXml = '<skills>\n<skill>\n<name>azure-cosmos-py</name>\n<description>Test</description>\n</skill>\n<skill>\n<name>find-skills</name>\n<description>Find</description>\n</skill>\n</skills>';
+    const data = {
+      sessionId: 'skill-xml',
+      requests: [{
+        requestId: 'r1',
+        timestamp: 1700000001000,
+        message: { text: 'help' },
+        response: [{ value: 'ok' }],
+        variableData: {
+          variables: [{
+            kind: 'promptText',
+            value: skillXml,
+          }],
+        },
+        result: { metadata: {} },
+      }],
+    };
+    withTempFile('skill-xml.json', JSON.stringify(data), (filePath) => {
+      const session = parseSessionFile(filePath, 'ws', 'wp', 'Local Agent');
+      expect(session).not.toBeNull();
+      const skills = session!.requests[0].skillsUsed;
+      expect(skills).toContain('azure-cosmos-py');
+      expect(skills).toContain('find-skills');
+      expect(skills).toHaveLength(2);
+    });
+  });
+
+  it('handles tool call arguments as object (not JSON string)', () => {
+    const data = {
+      sessionId: 'skill-args-obj',
+      requests: [{
+        requestId: 'r1',
+        timestamp: 1700000001000,
+        message: { text: 'read' },
+        response: [{ value: 'ok' }],
+        result: {
+          metadata: {
+            toolCallRounds: [{
+              toolCalls: [
+                { name: 'read_file', arguments: { filePath: '/home/user/.agents/skills/playwright-cli/SKILL.md', startLine: 1, endLine: 50 } },
+              ],
+            }],
+          },
+        },
+      }],
+    };
+    withTempFile('skill-args-obj.json', JSON.stringify(data), (filePath) => {
+      const session = parseSessionFile(filePath, 'ws', 'wp', 'Local Agent');
+      expect(session).not.toBeNull();
+      expect(session!.requests[0].skillsUsed).toContain('playwright-cli');
+    });
+  });
+});
