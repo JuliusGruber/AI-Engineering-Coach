@@ -252,7 +252,7 @@ export function formatPatterns(analyzer: Analyzer, f?: DateFilter) {
         medium: ap.patterns.filter(p => p.severity === 'medium').length,
         low: ap.patterns.filter(p => p.severity === 'low').length,
       },
-      patterns: ap.patterns
+      patterns: [...ap.patterns]
         .sort((a, b) => {
           const sev = { high: 3, medium: 2, low: 1 };
           return (sev[b.severity] - sev[a.severity]) || (b.occurrences - a.occurrences);
