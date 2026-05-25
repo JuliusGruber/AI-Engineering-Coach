@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { stateDir, type ServerState } from '../state';
+import { readServerState, stateDir, writeServerState, type ServerState } from '../state';
 
 const mockOs = vi.hoisted(() => ({
   homedir: vi.fn(),
@@ -43,5 +43,23 @@ describe('stateDir', () => {
     const dir = stateDir();
     expect(dir).toBe(path.join(tmpHome, '.ai-engineer-coach'));
     expect(fs.existsSync(dir)).toBe(true);
+  });
+});
+
+describe('read/write round-trip', () => {
+  it('read server state returns null when absent', () => {
+    expect(readServerState()).toBeNull();
+  });
+
+  it('write then read server state round-trips', () => {
+    const state = sampleState();
+    writeServerState(state);
+    expect(readServerState()).toEqual(state);
+  });
+
+  it('atomic write does not leave .tmp on success', () => {
+    writeServerState(sampleState());
+    const tmp = path.join(stateDir(), 'server-state.json.tmp');
+    expect(fs.existsSync(tmp)).toBe(false);
   });
 });
