@@ -142,7 +142,7 @@ If `src/standalone/vscode-stub.ts` already exists, open it and confirm it matche
 // Resolves the transitive `import * as vscode` pulled in by reused webview
 // files — panel-shared.ts:7 (via getRpcHandler) — AND satisfies the one live
 // call on the standalone path: getDashboardHtml -> vscode.Uri.joinPath
-// (panel-html.ts:11), used by 03-standalone-html.
+// (panel-html.ts:11), used later by 03-standalone-html.
 export const Uri = {
   joinPath: (_base: unknown, ...parts: string[]) => ({
     path: parts.join('/'),
@@ -191,8 +191,8 @@ export default defineConfig({
   },
   resolve: {
     // Reused upstream webview modules pull a top-level `import * as vscode`
-    // (panel-html.ts:6, panel-shared.ts:7). Map it to the standalone stub so tests
-    // importing the real panel-html/panel-rpc resolve. Mirrors the esbuild alias in 07-build.
+    // (panel-shared.ts:7). Map it to the standalone stub so tests importing the
+    // real panel-rpc resolve. Mirrors the esbuild alias in 07-build.
     alias: {
       vscode: fileURLToPath(new URL('./src/standalone/vscode-stub.ts', import.meta.url)),
     },

@@ -8,7 +8,7 @@ skipped until the plan is written.
 - [x] grilled — 06-state.plan.md
 - [x] grilled — 02-dispatcher.plan.md
 - [x] grilled — 04-webview-shim.plan.md
-- [ ] 03-standalone-html
+- [x] grilled — 03-standalone-html.plan.md
 - [ ] 01-server
 - [ ] 05-cli
 - [ ] 07-build
