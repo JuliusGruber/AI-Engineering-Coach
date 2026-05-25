@@ -13,5 +13,5 @@ are blocked, not skipped.
 - [x] implemented — 03-standalone-html.plan.md
 - [x] implemented — 01-server.plan.md
 - [x] implemented — 05-cli.plan.md
-- [ ] 07-build
+- [x] implemented — 07-build.plan.md
 - [ ] 08-testing
