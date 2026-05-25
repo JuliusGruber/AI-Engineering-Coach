@@ -22,6 +22,16 @@
   - **Disabled-method UX** — `BANNER_WORTHY` is the curated set of user-initiated
     content-creation methods; every other disabled method is silent (forwarded, no
     banner). The split lives **only** in the shim.
+    - **Why `triageCatalog` in `BANNER_WORTHY` does *not* violate global acceptance
+      #4 ("banner not on page loads"):** its only two call sites
+      (`page-dashboard.ts:407`, `page-skills.ts:366`) are both gated behind
+      `discoverCatalog` returning items, and `discoverCatalog` is itself
+      silent-disabled in v1 (returns the error envelope → `.catch(() => null)` /
+      caught → the guard short-circuits). So `triageCatalog` is **never dispatched**
+      in standalone v1 and can never banner on a load. It is kept in the set to
+      mirror `00-overview`'s curated list verbatim (drift guard) and to be correct
+      if `discoverCatalog` is ever enabled. The `BANNER_WORTHY.size === 10` test
+      pins this; do not drop the member.
   - **Security model** — `script-src 'self'` (no nonce) forces the shim to be an
     **external** `/standalone-shim.js`, not an inline `<script>`; the
     `HttpOnly coach_token` cookie is unreadable from JS, so the WS token arrives via
@@ -50,7 +60,12 @@ specs share **no interfaces** with the shim:
 
 The contracts this plan locks in for `01-server` to honor:
 - The shim opens `ws://${location.host}/rpc?t=${token}` — the server's WS route is
-  `/rpc` with a `?t=<64-hex>` query param.
+  `/rpc` with a `?t=<64-hex>` query param. The shim only connects when the token
+  matches `/^[0-9a-f]{64}$/` (**lowercase** 64-hex). This is exactly the output of
+  `crypto.randomBytes(32).toString('hex')`, the generator used by `01-server`,
+  `05-cli` (`--rotate-token`), and validated identically in `06-state`'s `state.ts`.
+  Those plans must keep emitting lowercase hex; an uppercase/base64 token would fail
+  the shim's regex and silently disable RPC.
 - The shim reads the token from `<meta name="coach-token" content="<64-hex>">` —
   `03-standalone-html` must emit exactly that tag and `01-server` must serve it.
 - The shim sends each `postMessage` payload as a **single JSON text frame**
