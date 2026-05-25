@@ -134,23 +134,26 @@ and the native handler is unit-testable in isolation.
 
 `import { getRpcHandler } from '../webview/panel-rpc'` is **not**
 vscode-free at module level, despite `panel-rpc.ts` itself using only
-lazy `require('vscode')`. There are **two** top-level transitive chains,
-both triggered the moment the dispatcher module loads:
+lazy `require('vscode')`. There is **one** top-level transitive chain,
+triggered the moment the dispatcher module loads:
 
 1. `errorResult` from `./panel-shared` (`panel-rpc.ts:39`) → `panel-shared.ts`
    has a top-level `import * as vscode from 'vscode'` (`panel-shared.ts:7`).
-2. `compileNaturalLanguageRule` from `../core/rule-compiler` (`panel-rpc.ts:37`)
-   → `rule-compiler.ts` also imports `vscode` at module level.
+
+(`compileNaturalLanguageRule` from `../core/rule-compiler` (`panel-rpc.ts:37`)
+does **not** add a second chain: `rule-compiler.ts` uses a **lazy
+`require('vscode')`** inside a function (`rule-compiler.ts:77`), so loading it
+does not pull `vscode` — the alias still covers that path if it ever runs.)
 
 The fix lives in build/test config, not here: `vscode` is aliased to
 `src/standalone/vscode-stub.ts` in both the esbuild standalone entry and
 the vitest config (see [00-overview](00-overview.md#additive-only-fork-discipline),
 [07-build](07-build.md), [08-testing](08-testing.md)). A **single global
-alias covers both chains** (and any future one). With it in place, the
+alias covers this chain** (and any future one). With it in place, the
 dispatcher's unit tests can use the **real** `panel-rpc` instead of
 `vi.mock`, which is a stronger test. Do **not** "fix" this by avoiding a
 specific import — importing `getRpcHandler` alone is enough to pull in
-both `panel-shared` and `rule-compiler`.
+`panel-shared` (and thus its top-level `vscode` import).
 
 ## Decisions
 
