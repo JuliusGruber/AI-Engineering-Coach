@@ -193,7 +193,7 @@ analyzer + parse result — the same shape `panel.ts:215` feeds to
 ```ts
 // src/standalone/parse-bootstrap.ts
 import type { Analyzer } from '../core/analyzer';
-import type { ParseResult } from '../core/parser';
+import type { ParseResult } from '../core/cache';
 
 type ProgressFn = (p: { phase: number; pct: number; detail?: string; [k: string]: unknown }) => void;
 

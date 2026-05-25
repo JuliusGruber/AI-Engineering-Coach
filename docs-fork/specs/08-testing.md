@@ -36,25 +36,35 @@ multiple modules.
 ### Layer 0: first-build per-page RPC audit (one-time, gated)
 
 Before the Playwright list is finalized, the implementing agent performs a
-mechanical audit that pins the visibility decisions to evidence:
+mechanical audit that pins the page behavior to evidence. There is **no
+hidden-set to produce** — the standalone reuses the upstream nav verbatim
+(see [03-standalone-html](03-standalone-html.md)). The audit instead
+**confirms every nav page degrades gracefully** and **pins `BANNER_WORTHY`**.
 
-1. For **every** page id in `ALL_NAV_ENTRIES`, grep its `page-*.ts` for
-   `rpc('…')` / `rpcAllSettled([... 'method' ...])` calls.
+1. For **each of the 10 real nav page ids** (`dashboard`, `timeline`,
+   `image-gallery`, `output`, `burndown`, `patterns`, `anti-patterns`,
+   `skills`, `config-health`, `level-up`) and the deep-link-only routes
+   (`rule-editor`, `rule-playground`, `data-explorer`), grep the rendering
+   `page-*.ts` for `rpc('…')` / `rpcAllSettled([...])` calls.
 2. Classify each method into one of four buckets:
    - **registry-allowlisted** (`V1_ALLOWED`) — works.
-   - **native** (`STANDALONE_NATIVE`) — works.
-   - **silent-disabled** — degrades the section quietly.
-   - **banner-worthy** — user-initiated; shows the roadmap banner.
-3. **Decision rule:** any page whose *primary* data source is
-   silent-disabled (e.g. `sdlc`) moves to `HIDDEN_IN_STANDALONE_V1`.
-   Pages that merely have a *secondary* degrading section (dashboard's
-   skill suggestions, `config-health`'s context review) stay visible.
-4. Record the audit table in the PR description and reconcile it against
-   the feasibility doc's page-visibility table.
+   - **native** (`STANDALONE_NATIVE`) — works (`openExternal` only in v1).
+   - **silent-disabled** — degrades the section quietly (the page's own
+     `.catch(() => null)` handles it).
+   - **banner-worthy** — user-initiated content creation; shows the banner.
+3. **Decision rule:** every nav page must still **render** with its
+   silent-disabled sections degraded (e.g. `level-up`'s `getSdlcToolAnalysis`
+   badge just hides; `skills`'s `triage*` suggestions collapse). If a page
+   renders **broken** (not merely degraded) on a disabled primary source,
+   **halt and escalate to the maintainer** — do not silently drop a nav
+   entry, since dropping one now requires editing the reused upstream body.
+   (Evidence from the spec grilling: all 10 nav pages degrade gracefully.)
+4. Reconcile the discovered banner-worthy methods against the
+   [04-webview-shim](04-webview-shim.md) `BANNER_WORTHY` set; record the
+   audit table in the PR description.
 
-This is the same audit referenced by
-[03-standalone-html](03-standalone-html.md) and is the guard that catches
-a future upstream page added with a disabled data source.
+This is the guard that catches a future upstream page whose primary data
+source becomes disabled.
 
 ### Layer 1: unit (vitest)
 
@@ -97,7 +107,7 @@ messages), HTTP probes to `/health` and `/`, and exit codes.
 | `cli with --port honors override`               | Probe non-default port                                      |
 | `cli with --no-open does not spawn browser`     | `OPEN` env var (provided to `open` lib's fallback) is unused; mock via PATH manipulation |
 | `disabled method returns data-nested error`     | WS client sends `{method:'saveRule'}`; asserts `{type:'response', id, data:{error, code:'standalone-v1-disabled', method}}` |
-| `native loadModelBudgets works before dataReady`| WS sends `loadModelBudgets` immediately; asserts `{}` (no analyzer needed) |
+| `native openExternal works before dataReady`    | WS sends `openExternal {url:'https://example.com'}` immediately; asserts `{ok:true}` (no analyzer needed; `open` spied/stubbed) |
 | `port collision retries +1..+9 then fails`      | Pre-bind two probe servers on 7331..7340, assert exit 1     |
 
 Set `COACH_HOME=<tmpdir>` env var support in [05-cli](05-cli.md)? **No
@@ -114,26 +124,24 @@ Setup:
 
 1. Generate a synthetic session log fixture under
    `tests/standalone/fixtures/home/.claude/...` with enough data to
-   populate every visible page (minimal viable: 7 days of sessions
-   across 3 harnesses).
+   populate every page (minimal viable: 7 days of sessions across 3
+   harnesses).
 2. Boot the CLI with `HOME` (or `USERPROFILE`) pointing at the fixture
    home, on a random free port.
-3. For each entry in `visibleNavEntries()` from
-   [03-standalone-html](03-standalone-html.md):
+3. For each of the **10 real nav page ids** (`dashboard`, `timeline`,
+   `image-gallery`, `output`, `burndown`, `patterns`, `anti-patterns`,
+   `skills`, `config-health`, `level-up`):
    - Navigate to `http://127.0.0.1:<port>/?t=<token>#<id>`.
-   - Wait for `main#coach-main` to be populated (selector exists +
-     children > 0).
+   - Wait for `main#content` to be populated (selector exists +
+     children > 0). Note: `#burndown` redirects to `#dashboard` while
+     `FF_TOKEN_REPORTING_ENABLED` is `false` (`app.ts:27`); assert it
+     lands on a populated dashboard rather than erroring.
    - Assert page console contains zero `error`-level entries.
-4. Banner behavior depends on *why* a page is hidden (see
-   [03-standalone-html](03-standalone-html.md) — two reasons):
-   - **Authoring/LLM hidden pages** (`rule-editor`, `rule-playground`,
-     `antipatterns-editor`, `data-explorer`, `learning`): navigate to
-     `#<id>`, trigger a **banner-worthy** disabled method (the page fires
-     one on mount; if not, `postMessage` a known banner-worthy method like
-     `getRuleEditor`), and assert `#coach-roadmap-banner` exists.
-   - **`sdlc`** (hidden because its data source is silent-disabled):
-     navigate to `#sdlc`, assert the page renders **without** crashing
-     and **without** a banner (its methods are silent-disabled).
+4. **Positive banner test.** On the Skill Finder page (`#skills`), trigger a
+   genuinely user-initiated banner-worthy method — click the create/install
+   affordance, or `postMessage` `{ type:'request', id, method:'createSkill' }`
+   — and assert `#coach-roadmap-banner` appears. This is the real banner
+   path (user-initiated content creation on a visible page).
 5. **Dashboard must NOT show the banner.** Navigate to `#dashboard`,
    let it fire its proactive `triageSkills`/`discoverCatalog`/
    `triageCatalog` calls, and assert `#coach-roadmap-banner` is **absent**
@@ -213,8 +221,11 @@ Decisions on the matrix:
    exits 0 on macOS and Linux.
 4. The CI workflow runs end-to-end green on all three OSes (with
    Playwright skipped on Windows per decision above).
-5. Modifying `nav-config.ts` to drop a visible entry causes the
-   Playwright smoke test to fail (regression guard for nav drift).
+5. The Playwright smoke loop visits all 10 real nav pages and fails if any
+   renders a console `error` (the per-page render guard). A `getDashboardHtml`
+   reformat that defeats `renderStandaloneHtml`'s `replaceOnce` anchors fails
+   the `standalone-html` unit test (the head/script drift guard from
+   [03-standalone-html](03-standalone-html.md)).
 6. Modifying `V1_ALLOWED` to remove a method causes the relevant
    per-module unit test to fail (verified by the "exactly 40" assertion
    in [02-dispatcher](02-dispatcher.md)).
@@ -222,8 +233,8 @@ Decisions on the matrix:
    `vscode` module present) does not throw — the `vscode`-alias
    regression guard.
 8. The Playwright suite asserts `#coach-roadmap-banner` is **absent** on
-   `#dashboard` and **present** on a deep-linked banner-worthy hidden
-   page — the curated-banner regression guard.
+   `#dashboard` and **present** on `#skills` after a user-initiated
+   `createSkill` — the curated-banner regression guard.
 
 ## Test plan
 
