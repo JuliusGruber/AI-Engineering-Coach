@@ -12,6 +12,6 @@ are blocked, not skipped.
 - [x] implemented — 04-webview-shim.plan.md
 - [x] implemented — 03-standalone-html.plan.md
 - [x] implemented — 01-server.plan.md
-- [ ] 05-cli
+- [x] implemented — 05-cli.plan.md
 - [ ] 07-build
 - [ ] 08-testing
