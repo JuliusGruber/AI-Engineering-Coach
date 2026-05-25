@@ -9,6 +9,6 @@ shared contract reference, not a subsystem.
 - [x] ready — 04-webview-shim.plan.md
 - [x] ready — 03-standalone-html.plan.md
 - [x] ready — 01-server.plan.md
-- [ ] 05-cli
+- [x] ready — 05-cli.plan.md
 - [ ] 07-build
 - [ ] 08-testing
