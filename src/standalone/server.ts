@@ -153,6 +153,16 @@ function attachRpcServer(server: http.Server, deps: RpcDeps): WebSocketServer {
   const wss = new WebSocketServer({ server, path: '/rpc' });
   const alive = new WeakMap<WebSocket, boolean>();
 
+  // ws re-emits the underlying http server's 'error' onto the WebSocketServer
+  // (ws/lib/websocket-server.js). An unhandled 'error' event crashes Node, so
+  // absorb it here: port-bind retries are owned by listenWithRetry (EADDRINUSE
+  // is expected during the 7331..7340 scan), so swallow those and surface anything
+  // else without taking down the host.
+  wss.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') return;
+    console.error('[coach] websocket server error:', err);
+  });
+
   wss.on('connection', (socket, req) => {
     const url = new URL(req.url ?? '/rpc', `http://${HOST}`);
     const t = url.searchParams.get('t') ?? '';
