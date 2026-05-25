@@ -190,3 +190,61 @@ describe('inbound forwarding', () => {
     expect(window.postMessage).not.toHaveBeenCalled();
   });
 });
+
+describe('reconnect', () => {
+  beforeEach(() => vi.useFakeTimers());
+  // afterEach's vi.useRealTimers() (top-level) restores real timers.
+
+  it('reconnect uses exponential backoff capped at 30 s', () => {
+    installWithToken();
+    expect(MockWebSocket.instances).toHaveLength(1);
+
+    // 1st close → attempt 1 → reconnect after 250 * 2^1 = 500 ms.
+    MockWebSocket.instances.at(-1)!.triggerClose();
+    vi.advanceTimersByTime(499);
+    expect(MockWebSocket.instances).toHaveLength(1); // not yet
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(2); // reconnected at 500 ms
+
+    // Drive attempt up; advancing the full 30 s cap always fires the pending timer.
+    for (let i = 0; i < 6; i++) {
+      MockWebSocket.instances.at(-1)!.triggerClose();
+      vi.advanceTimersByTime(30_000);
+    }
+    // attempt is now 7; the next close schedules min(250 * 2^8, 30000) = 30000 ms.
+    const before = MockWebSocket.instances.length;
+    MockWebSocket.instances.at(-1)!.triggerClose();
+    vi.advanceTimersByTime(29_999);
+    expect(MockWebSocket.instances).toHaveLength(before); // capped: not yet
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(before + 1); // fires at exactly 30 s
+  });
+
+  it('dispatches coach:disconnected exactly once after 5 close events', () => {
+    const onDisc = vi.fn();
+    window.addEventListener('coach:disconnected', onDisc);
+    installWithToken();
+
+    for (let i = 0; i < 5; i++) {
+      MockWebSocket.instances.at(-1)!.triggerClose();
+      vi.advanceTimersByTime(30_000); // fire the reconnect → fresh socket to close next
+    }
+
+    expect(onDisc).toHaveBeenCalledTimes(1); // only attempt === 5 dispatches
+    window.removeEventListener('coach:disconnected', onDisc);
+  });
+
+  it('resets backoff counter on successful open', () => {
+    installWithToken();
+    MockWebSocket.instances.at(-1)!.triggerClose(); // attempt 1 → schedule 500 ms
+    vi.advanceTimersByTime(500); // reconnect → instance #2
+    MockWebSocket.instances.at(-1)!.open(); // open resets attempt to 0
+    MockWebSocket.instances.at(-1)!.triggerClose(); // attempt back to 1 → schedule 500 ms
+
+    const before = MockWebSocket.instances.length;
+    vi.advanceTimersByTime(499);
+    expect(MockWebSocket.instances).toHaveLength(before); // not 1000 ms → reset worked
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(before + 1); // reconnected at 500 ms
+  });
+});

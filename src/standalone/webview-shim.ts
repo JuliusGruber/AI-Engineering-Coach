@@ -47,6 +47,12 @@ export function installShim(): void {
       }
       window.postMessage(frame, '*'); // always forward; page handles data.error
     });
+    ws.addEventListener('close', () => {
+      ws = null;
+      attempt += 1;
+      if (attempt >= 5) window.dispatchEvent(new Event('coach:disconnected'));
+      setTimeout(connect, Math.min(250 * 2 ** attempt, 30000));
+    });
     ws.addEventListener('error', (e) => console.warn('[coach] ws error', e));
   }
 
