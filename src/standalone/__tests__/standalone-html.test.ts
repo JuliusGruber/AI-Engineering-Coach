@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JSDOM } from 'jsdom';
 import * as panelHtml from '../../webview/panel-html';
 import { renderStandaloneHtml } from '../standalone-html';
 
@@ -66,6 +67,40 @@ describe('renderStandaloneHtml — Transform 1: CSP + coach-token meta', () => {
     );
     expect(() => renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' })).toThrow(
       /expected exactly one CSP meta tag, found 0/,
+    );
+  });
+});
+
+describe('renderStandaloneHtml — Transform 2: external scripts', () => {
+  const html = renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' });
+
+  it('loads the external shim before app.js', () => {
+    const shimAt = html.indexOf('<script src="/standalone-shim.js">');
+    const appAt = html.indexOf('<script src="/dist/webview/app.js">');
+    expect(shimAt).toBeGreaterThan(-1);
+    expect(appAt).toBeGreaterThan(-1);
+    expect(shimAt).toBeLessThan(appAt);
+  });
+
+  it('contains exactly two scripts, both external, none inline', () => {
+    const scripts = [...new JSDOM(html).window.document.querySelectorAll('script')];
+    expect(scripts).toHaveLength(2);
+    expect(scripts.every((s) => s.hasAttribute('src'))).toBe(true);
+    expect(scripts.map((s) => s.getAttribute('src'))).toEqual([
+      '/standalone-shim.js',
+      '/dist/webview/app.js',
+    ]);
+  });
+
+  it('throws if the app.js script anchor is missing (drift guard)', () => {
+    // Has a CSP meta (Transform 1 passes) but no nonce'd app.js <script>.
+    vi.spyOn(panelHtml, 'getDashboardHtml').mockReturnValue(
+      '<!DOCTYPE html><html><head>' +
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'">' +
+        '</head><body><main id="content"></main></body></html>',
+    );
+    expect(() => renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' })).toThrow(
+      /expected exactly one app\.js script tag, found 0/,
     );
   });
 });
