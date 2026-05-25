@@ -6,8 +6,8 @@ shared contract reference, not a subsystem.
 
 - [x] ready — 06-state.plan.md
 - [x] ready — 02-dispatcher.plan.md
-- [ ] 04-webview-shim
-- [ ] 03-standalone-html
+- [x] ready — 04-webview-shim.plan.md
+- [x] ready — 03-standalone-html.plan.md
 - [ ] 01-server
 - [ ] 05-cli
 - [ ] 07-build
