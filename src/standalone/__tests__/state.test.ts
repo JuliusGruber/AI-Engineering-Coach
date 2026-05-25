@@ -111,3 +111,14 @@ describe('clearServerState', () => {
     expect(readServerState()).toBeNull();
   });
 });
+
+const itPosix = process.platform === 'win32' ? it.skip : it;
+
+describe('file mode', () => {
+  itPosix('file mode is 0600 on POSIX', () => {
+    writeServerState(sampleState());
+    const file = path.join(stateDir(), 'server-state.json');
+    const mode = fs.statSync(file).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+});
