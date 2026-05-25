@@ -262,18 +262,31 @@ contract. Two files are shared and may be **additively** edited:
 `bin/coach` and `src/standalone/vscode-stub.ts` are new files (allowed).
 `docs-fork/` is fork-only.
 
-**Why the `vscode` alias is required (not optional).** Two reused upstream
-modules pull a **top-level** `import * as vscode` that runs the moment the
-standalone loads them: `panel-shared.ts:7` (via `getRpcHandler` →
+**Why the `vscode` alias is required (not optional).** One reused upstream
+module pulls a **top-level** `import * as vscode` that runs the moment the
+standalone loads it: `panel-shared.ts:7` (via `getRpcHandler` →
 `errorResult`, used only in `postResponse`/`postError`, which the standalone
-never calls) and `core/rule-compiler.ts` (via `panel-rpc.ts:37`). In
-addition, the HTML wrapper reuses `getDashboardHtml`, which **actively
-calls** `vscode.Uri.joinPath` (`panel-html.ts:11`). A production esbuild
-bundle *might* tree-shake unused namespaces; vitest (which transforms, not
-bundles) will not. One **global** stub alias resolves every chain
-deterministically and supplies the `Uri.joinPath` the HTML path needs. See
+never calls). `core/rule-compiler.ts` (reached via `panel-rpc.ts:37`) uses a
+**lazy `require('vscode')`** inside a function (`rule-compiler.ts:77`), so it
+does *not* pull `vscode` at module load — but the single global alias covers
+that path too if it ever runs. In addition, the HTML wrapper reuses
+`getDashboardHtml`, which **actively calls** `vscode.Uri.joinPath`
+(`panel-html.ts:11`). A production esbuild bundle *might* tree-shake unused
+namespaces; vitest (which transforms, not bundles) will not. One **global**
+stub alias resolves the import deterministically and supplies the
+`Uri.joinPath` the HTML path needs. See
 [02-dispatcher](02-dispatcher.md#transitive-vscode-import) and
 [03-standalone-html](03-standalone-html.md).
+
+**When these come into existence.** The `vscode-stub.ts` file, the vitest
+`resolve.alias`, and the `open` dependency are a shared foundation, not a
+07/08 deliverable: they are bootstrapped at first use by
+[02-dispatcher](02-dispatcher.md) — the earliest spec whose unit tests load the
+real `panel-rpc` — and are also required by
+[03-standalone-html](03-standalone-html.md). [07-build](07-build.md) and
+[08-testing](08-testing.md) *formalize* the build-side (esbuild) alias and the
+CI matrix; they do not introduce the stub/alias/dep. Treat their creation as
+idempotent (check-and-skip if already present).
 
 ## V1 acceptance criteria (mirror of feasibility doc)
 
