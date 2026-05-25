@@ -1,7 +1,9 @@
 // src/standalone/standalone-html.ts
 // Wraps the unmodified upstream getDashboardHtml (panel-html.ts) for a plain
-// browser: swaps the VS Code CSP for the standalone CSP and injects the
-// coach-token meta. See docs-fork/specs/03-standalone-html.md.
+// browser: swaps the VS Code CSP for the standalone CSP, injects the coach-token
+// meta, and replaces the nonce'd inline-bundle <script> with the external shim +
+// app.js. Two assert-once replacements turn upstream markup drift into a loud
+// failure instead of a silently blank page. See docs-fork/specs/03-standalone-html.md.
 import { getDashboardHtml } from '../webview/panel-html'; // pulls panel-shared -> vscode (aliased to the stub)
 
 export interface HtmlOptions {
@@ -56,6 +58,16 @@ export function renderStandaloneHtml(opts: HtmlOptions): string {
     /<meta http-equiv="Content-Security-Policy"[^>]*>/,
     `${STANDALONE_CSP_META}\n${tokenMeta(opts.token)}`,
     'CSP meta tag',
+  );
+
+  // Transform 2: replace the nonce'd app.js <script> with the external shim + app.js,
+  // both nonce-free. Document order guarantees the shim defines acquireVsCodeApi
+  // before app.js evaluates. No defer/async.
+  html = replaceOnce(
+    html,
+    /<script nonce="[^"]*" src="\/dist\/webview\/app\.js"><\/script>/,
+    `<script src="/standalone-shim.js"></script>\n<script src="/dist/webview/app.js"></script>`,
+    'app.js script tag',
   );
 
   return html;
