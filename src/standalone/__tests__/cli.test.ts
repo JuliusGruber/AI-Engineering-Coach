@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 vi.mock('../server', () => ({
   createServer: vi.fn(),
@@ -9,7 +12,7 @@ vi.mock('../parse-bootstrap', () => ({
 }));
 vi.mock('open', () => ({ default: vi.fn() }));
 
-import { runCli } from '../cli';
+import { runCli, attachLogFile } from '../cli';
 import { createServer, probeExistingInstance, type ServerHandle } from '../server';
 import { bootstrapParse } from '../parse-bootstrap';
 import open from 'open';
@@ -171,5 +174,38 @@ describe('runCli — boot', () => {
     mockedCreateServer.mockRejectedValue(new Error('no free port in 7331..7340'));
 
     await expect(runCli(['node', 'coach', '--no-open'])).rejects.toThrow('no free port');
+  });
+});
+
+describe('attachLogFile', () => {
+  it('tees subsequent stderr writes into the log file', () => {
+    errCap.restore(); // drop the global stderr spy so we tee the real stream
+    const realWrite = process.stderr.write;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coach-log-'));
+    const logPath = path.join(dir, 'coach.log');
+
+    try {
+      attachLogFile(logPath);
+      process.stderr.write('hello-log\n');
+      process.stderr.write = realWrite; // detach the tee before asserting
+
+      expect(fs.readFileSync(logPath, 'utf8')).toContain('hello-log');
+    } finally {
+      process.stderr.write = realWrite;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not throw when the log path is unwritable', () => {
+    errCap.restore();
+    const realWrite = process.stderr.write;
+    const badPath = path.join(os.tmpdir(), 'coach-no-such-dir-xyz', 'a.log');
+
+    try {
+      expect(() => attachLogFile(badPath)).not.toThrow();
+      expect(process.stderr.write).toBe(realWrite); // left the stream untouched
+    } finally {
+      process.stderr.write = realWrite;
+    }
   });
 });
