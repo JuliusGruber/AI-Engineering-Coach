@@ -39,6 +39,26 @@ export function readPkgVersion(): string {
   }
 }
 
+// Tee every subsequent stderr write into `logFile` (append). A bad path warns once
+// and leaves stderr untouched -- a missing log target must never abort boot.
+export function attachLogFile(logFile: string): void {
+  try {
+    fs.appendFileSync(logFile, ''); // validate the path up front
+  } catch (e) {
+    process.stderr.write(`(could not open log file ${logFile}: ${(e as Error).message})\n`);
+    return;
+  }
+  const original = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
+    try {
+      fs.appendFileSync(logFile, typeof chunk === 'string' ? chunk : Buffer.from(chunk));
+    } catch {
+      /* keep stderr working even if the file later vanishes */
+    }
+    return (original as (c: string | Uint8Array, ...r: unknown[]) => boolean)(chunk, ...rest);
+  }) as typeof process.stderr.write;
+}
+
 export async function runCli(argv: string[]): Promise<number> {
   let flags: ParsedFlags;
   try {
@@ -60,6 +80,8 @@ export async function runCli(argv: string[]): Promise<number> {
     process.stdout.write(`${readPkgVersion()}\n`);
     return 0;
   }
+
+  if (flags.logFile) attachLogFile(flags.logFile);
 
   const existing = await probeExistingInstance(flags.port);
   if (existing) {
