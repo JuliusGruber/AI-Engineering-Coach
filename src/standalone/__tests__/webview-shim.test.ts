@@ -248,3 +248,58 @@ describe('reconnect', () => {
     expect(MockWebSocket.instances).toHaveLength(before + 1); // reconnected at 500 ms
   });
 });
+
+describe('roadmap banner', () => {
+  const BANNER_ID = '#coach-roadmap-banner';
+
+  function disabledFrame(method: string) {
+    return {
+      type: 'response',
+      id: '7',
+      data: { error: `'${method}' is disabled in standalone v1`, code: 'standalone-v1-disabled', method },
+    };
+  }
+
+  it('banners a BANNER_WORTHY disabled method (and still forwards the frame)', () => {
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+    const frame = disabledFrame('createSkill');
+
+    ws.message(JSON.stringify(frame));
+
+    expect(document.querySelector(BANNER_ID)).not.toBeNull();
+    expect(window.postMessage).toHaveBeenCalledWith(frame, '*'); // forwarded too
+  });
+
+  it('does NOT banner a silent-disabled method (but still forwards it)', () => {
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+    const frame = disabledFrame('triageSkills');
+
+    ws.message(JSON.stringify(frame));
+
+    expect(document.querySelector(BANNER_ID)).toBeNull();
+    expect(window.postMessage).toHaveBeenCalledWith(frame, '*');
+  });
+
+  it('banner close button removes the element', () => {
+    installWithToken();
+    MockWebSocket.instances[0].message(JSON.stringify(disabledFrame('createSkill')));
+
+    const button = document.querySelector<HTMLButtonElement>(`${BANNER_ID} button`);
+    expect(button).not.toBeNull();
+    button!.click();
+
+    expect(document.querySelector(BANNER_ID)).toBeNull();
+  });
+
+  it('repeated disabled responses do not stack banners', () => {
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+
+    ws.message(JSON.stringify(disabledFrame('createSkill')));
+    ws.message(JSON.stringify(disabledFrame('installSkill')));
+
+    expect(document.querySelectorAll(BANNER_ID)).toHaveLength(1);
+  });
+});

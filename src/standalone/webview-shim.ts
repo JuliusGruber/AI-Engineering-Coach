@@ -31,6 +31,38 @@ export function installShim(): void {
   let ws: WebSocket | null = null;
   let attempt = 0;
 
+  function showRoadmapBanner(): void {
+    const ID = 'coach-roadmap-banner';
+    let banner = document.getElementById(ID);
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = ID;
+      // Inline style: CSP allows style-src 'unsafe-inline' (see 00-overview).
+      banner.setAttribute(
+        'style',
+        'position:fixed;bottom:0;left:0;right:0;z-index:99999;display:flex;' +
+          'justify-content:space-between;align-items:center;gap:12px;' +
+          'padding:12px 16px;background:#1e1e1e;color:#fff;' +
+          'font:13px/1.4 sans-serif;border-top:1px solid #444;',
+      );
+      const text = document.createElement('span');
+      text.textContent =
+        'This feature is coming to standalone in v2. Today it lives in the VS Code extension.';
+      const close = document.createElement('button');
+      close.textContent = '×'; // multiplication sign as the dismiss glyph
+      close.setAttribute('aria-label', 'Dismiss');
+      close.setAttribute(
+        'style',
+        'background:none;border:none;color:#fff;font-size:18px;cursor:pointer;',
+      );
+      const el = banner;
+      close.addEventListener('click', () => el.remove());
+      banner.append(text, close);
+      document.body.appendChild(banner);
+    }
+    banner.dataset.ts = String(Date.now()); // idempotent: refresh timestamp, never stack
+  }
+
   function connect(): void {
     ws = new WebSocket(`ws://${location.host}/rpc?t=${token}`);
     ws.addEventListener('open', () => {
@@ -44,6 +76,11 @@ export function installShim(): void {
       } catch (e) {
         console.warn('[coach] bad frame', e);
         return;
+      }
+      // Banner decision lives here — the shim is the only place that sees every frame.
+      const f = frame as { data?: { code?: string; method?: string } };
+      if (f.data?.code === 'standalone-v1-disabled' && BANNER_WORTHY.has(f.data.method ?? '')) {
+        showRoadmapBanner();
       }
       window.postMessage(frame, '*'); // always forward; page handles data.error
     });
