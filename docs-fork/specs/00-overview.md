@@ -51,7 +51,7 @@ Every webview ↔ host message goes over a single WebSocket connection at
 type RpcRequest = {
   type: 'request';
   id: string;          // uuid v4, generated client-side
-  method: string;      // must be in V1_ALLOWED
+  method: string;      // must be in V1_ALLOWED or STANDALONE_NATIVE
   params?: unknown;
 };
 
@@ -59,29 +59,42 @@ type RpcRequest = {
 type RpcResponse = {
   type: 'response';
   id: string;          // matches request id
-  data?: unknown;      // present iff error absent
-  error?: RpcError;    // present iff data absent
+  data: unknown;       // success payload, OR an error object (RpcErrorData)
 };
 
 // Host → webview (unsolicited)
 type RpcPush = {
   type: 'progress' | 'dataReady';
-  // shape passed through unchanged from existing handlers
+  // shape passed through unchanged from the parse worker / orchestrator
   [k: string]: unknown;
 };
 
-type RpcError = {
+// Errors ride INSIDE `data` — they are NOT a sibling field. The
+// unmodified webview reads failures from `data.error` (see below); under
+// the additive-only rule we cannot change that, so the server must match
+// it. `code` is carried alongside so the shim can classify the failure.
+type RpcErrorData = {
+  error: string;       // human-readable; becomes the rejected Error message
   code: 'standalone-v1-disabled' | 'unknown-method' | 'handler-error' | 'bad-request';
-  method?: string;
-  message?: string;
+  method?: string;     // echoed so the shim can match against BANNER_WORTHY
 };
 ```
 
-Webview-side caller behavior (no edits to upstream): `panel-rpc.ts`
-already treats any object with an `error` field as a failure path. The
-existing `shared.ts` message listener forwards `ev.data` to
-`window.postMessage` (see [04-webview-shim](04-webview-shim.md)), which
-the webview's existing dispatch already handles.
+**Error-shape contract (load-bearing).** The unmodified webview
+consumes responses in `shared.ts:59-66`: it `resolve`s `msg.data`
+**unless** `msg.data.error` is truthy, in which case it
+`reject`s with `new Error(String(msg.data.error))`. There is **no**
+sibling-`error` code path. Therefore the server emits *every* error as
+`{ type: 'response', id, data: { error, code, method } }` — never as a
+top-level `error` field. A sibling `error` would leave `msg.data`
+`undefined`, hit the `else` branch, and `resolve(undefined)` — silently
+swallowing the failure. This is the production form of `errorResult(...)`
+(`panel-shared.ts:16`), which already returns `{ error, ...extra }`.
+
+The shim (see [04-webview-shim](04-webview-shim.md)) forwards each raw WS
+frame to `window.postMessage`, where the listener above handles it; the
+shim itself inspects `data.code` to decide whether to show the roadmap
+banner.
 
 ## Authoritative V1_ALLOWED method set
 
@@ -112,16 +125,62 @@ export const V1_ALLOWED: ReadonlySet<string> = new Set([
 `panel-rpc.ts:740` calls `require('vscode')` inside try/catch. The
 try/catch swallows the error, but excluding it avoids noisy logs.
 
+## Standalone-native methods (not in the registry)
+
+`V1_ALLOWED` gates only the upstream `getRpcHandler` registry. Three RPC
+method names the webview calls are **not** in that registry — upstream
+they were special-cased by the dropped host (`panel.ts:269,279`), so the
+fork must reimplement them as **native handlers** checked *before* the
+allowlist gate (see [02-dispatcher](02-dispatcher.md#three-tier-dispatch)):
+
+| Method             | Caller (visible page)   | Native behavior                                                        |
+|--------------------|-------------------------|------------------------------------------------------------------------|
+| `openExternal`     | `page-peers.ts:336`     | `open` package, **after** `new URL()` validates `http:`/`https:` only. |
+| `loadModelBudgets` | `page-burndown.ts`      | Return `readUserState().modelBudgets` **unwrapped** (default `{}`).     |
+| `saveModelBudgets` | `page-burndown.ts:95`   | `writeUserState({ …, modelBudgets })`; return `{ ok: true }`.          |
+
+These are not secret-gated differently from registry methods — they ride
+the same WS connection and token. They simply route to fork code instead
+of `getRpcHandler`. Every *other* non-registry method the webview can
+emit (the 16 `PanelRequestService` LLM/SDLC methods) is left to the
+disabled path.
+
+## Disabled-method UX: banner vs. silent
+
+A disabled method is one in neither `V1_ALLOWED` nor `STANDALONE_NATIVE`.
+The webview fires some of these *proactively* on visible pages — the
+dashboard alone calls `triageSkills` / `discoverCatalog` / `triageCatalog`
+on load (`page-dashboard.ts:395-407`). So "show a banner on any disabled
+response" would pop the roadmap banner on the home screen every visit.
+Disabled methods therefore split in two (the shim owns the set):
+
+- **Banner-worthy** — genuinely user-initiated content creation
+  (`createSkill`, `generateSkillContent`, `generateLearningQuiz`,
+  `generateLearningResources`, `generateCodeComparison`,
+  `generateDidYouKnow`, `installSkill`, `installCatalogItem`,
+  `triageCatalog`, plus deep-linked hidden-page methods like
+  `getRuleEditor`). → disabled envelope **+ roadmap banner**.
+- **Silent-disabled** — proactively fired by visible pages, each already
+  guarded by `.catch(() => null)` (`triageSkills`, `discoverCatalog`,
+  `reviewContextFiles`, `getSdlcToolAnalysis`, `getSdlcRepoScan`,
+  `getSdlcGitHubData`, `getWorkspaceDeps`). → disabled envelope, **no
+  banner**; the page degrades its section quietly.
+
+All disabled responses use the same `{ data: { error, code:
+'standalone-v1-disabled', method } }` shape; the split lives only in the
+shim's banner decision (keyed on `method ∈ BANNER_WORTHY`).
+
 ## Security model
 
 | Concern         | Decision                                                                 |
 |-----------------|--------------------------------------------------------------------------|
 | Bind address    | `127.0.0.1` only. No `--host` flag in v1.                                |
 | Auth            | Random 32-byte hex token. Required on every HTTP and WS request.         |
-| Token transport | URL query `?t=<token>` for initial GET `/`; thereafter via cookie set on first GET. |
+| Token transport | URL query `?t=<token>` for initial GET `/`; thereafter via cookie set on first GET. The WS token is handed to the shim via a `<meta name="coach-token">` tag in the served HTML (the cookie is `HttpOnly`, so JS cannot read it for the `ws://…?t=` URL). |
 | Token storage   | `~/.ai-engineer-coach/server-state.json` (mode 0600). Reused across boots. Regenerable via `--rotate-token`. |
 | CSP             | `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'`. Sent as both a `Content-Security-Policy` header and `<meta>` tag. |
-| `unsafe-inline` (style) | Required because chart.js + the inline shim script set element styles. Justified by same-origin and token gate. |
+| No inline scripts | `script-src 'self'` (no nonce, no `'unsafe-inline'`). The shim is therefore served as an **external** `/standalone-shim.js`, not an inline `<script>` — an inline polyfill would be blocked by this policy and `acquireVsCodeApi` would never be defined. See [03-standalone-html](03-standalone-html.md) / [04-webview-shim](04-webview-shim.md). |
+| `unsafe-inline` (style) | Required because chart.js sets element styles inline and the shim's roadmap banner uses an inline `style` attribute. Justified by same-origin and token gate. Does **not** extend to `script-src`. |
 | Path traversal  | All file-serving routes (`/dist/webview/`, `/img`) resolve the requested path, then verify it has an allowed-root prefix before serving. |
 | Image serving   | GET `/img?path=<urlencoded>` allowlists prefixes: `~/.claude`, `~/.codex`, `~/.opencode`, `~/.vscode`, `~/.xcode`, `~/.copilot-analytics-cache`. Anything else → 403. |
 
@@ -165,10 +224,27 @@ contract. Two files are shared and may be **additively** edited:
 - `package.json` — add only: `bin`, three deps (`express`, `ws`, `open`),
   scripts `serve` and `dev:standalone`, `files` array entries for the
   new dist paths. Do not touch existing keys.
-- `esbuild.mjs` — add only: new entry for `src/standalone/cli.ts`. Do
-  not modify existing entries.
+- `esbuild.mjs` — add only: new entries for `src/standalone/cli.ts` and
+  the external shim, plus a `vscode` → `src/standalone/vscode-stub.ts`
+  **alias scoped to the standalone entry only** (the extension build must
+  keep the real external `vscode`). Do not modify existing entries.
+- the test config (vitest) — add only: a matching `resolve.alias`
+  mapping `vscode` to the stub, so tests that import the real
+  `panel-rpc` library do not fail to resolve `vscode`.
 
-`bin/coach` is a new file (allowed). `docs-fork/` is fork-only.
+`bin/coach` and `src/standalone/vscode-stub.ts` are new files (allowed).
+`docs-fork/` is fork-only.
+
+**Why the `vscode` alias is required (not optional).** Importing
+`getRpcHandler` from `panel-rpc.ts` transitively loads `panel-shared.ts`,
+which has a **top-level** `import * as vscode from 'vscode'`
+(`panel-shared.ts:7`) — used only in `postResponse`/`postError`, which
+the standalone never calls, but the import statement runs regardless.
+A production esbuild bundle *might* tree-shake the unused namespace away;
+vitest (which transforms, not bundles) will not. The stub alias makes the
+import resolve to a harmless object everywhere, independent of
+tree-shaking, and future-proofs against any reused webview file touching
+`vscode`. See [02-dispatcher](02-dispatcher.md#transitive-vscode-import).
 
 ## V1 acceptance criteria (mirror of feasibility doc)
 
@@ -224,4 +300,10 @@ the relevant module.
 | Default port                          | 7331                                                      | Per feasibility doc; mnemonic ("RE3L") |
 | Single-instance reuse origin          | PID-alive check + `/health` payload match                 | Cheap; survives crashes |
 | Image-serving path                    | `/img?path=...` with allowlist                            | Avoids base64 bloat in RPC; cheaper than custom IPC |
-| Disabled-method response              | `{ error: { code: 'standalone-v1-disabled', method } }`   | Caller-friendly; banner-rendering code can switch on `code` |
+| RPC error shape                       | Nested in `data`: `{ data: { error, code, method } }`     | The unmodified webview reads `data.error` (`shared.ts:62`); a sibling `error` would silently `resolve(undefined)` |
+| Disabled-method response              | `{ data: { error, code: 'standalone-v1-disabled', method } }` | Webview rejects → page error boundary; shim reads `data.code` for the banner |
+| Shim delivery                         | External `/standalone-shim.js` + `<meta name="coach-token">` | `script-src 'self'` forbids an inline polyfill; cookie is `HttpOnly` so JS reads the WS token from the meta tag |
+| Parse lifecycle                       | Serve-then-parse; `dataReady` mandatory (not deferrable)  | The webview gates *all* rendering on `dataReady` (`app.ts:444`); `progress` forwarding is the only deferrable piece |
+| `vscode` import safety                | Alias `vscode` → `vscode-stub.ts` (standalone build + tests) | `panel-rpc` transitively pulls a top-level `import * as vscode` via `panel-shared.ts:7` |
+| Non-registry methods                  | Front-of-line `STANDALONE_NATIVE` table before the allowlist | `openExternal` + model budgets are called by visible pages but aren't in `getRpcHandler` |
+| Disabled-method banner                | Curated `BANNER_WORTHY` set in the shim; rest silent       | The dashboard fires disabled methods on load; a global banner would pop on the home screen |

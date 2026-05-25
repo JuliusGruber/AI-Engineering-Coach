@@ -41,10 +41,21 @@ v1 (see [Scope](#scope-decisions-v1)).
   `:116`, `:119`). Dropping project rules requires **zero** code changes.
 - `src/webview/panel-rpc.ts` uses a registry pattern at `:631`:
   `rpcHandlers: TypedRpcHandlers = { method: (a, _p, params) => ... }`,
-  exposed via `getRpcHandler(method)` at `:1284`. The 15 vscode references
-  in the file are all inside handlers we're dropping (LLM methods at
-  `:909`/`:1006`, `reviewLocalRules` at `:855`, `workspaceRoot` lookup at
-  `:741`). The read-only handlers are vscode-free.
+  exposed via `getRpcHandler(method)` at `:1284`. The vscode references
+  *in this file* are all lazy `require('vscode')` inside handlers we're
+  dropping (LLM methods at `:910`/`:1006`, `reviewLocalRules` at `:855`,
+  `workspaceRoot` lookup at `:741`). The read-only handlers are vscode-free.
+- **Correction (caught during spec review):** `panel-rpc.ts` is *not*
+  vscode-free at module level once you follow its imports. `panel-rpc.ts:39`
+  imports `errorResult` from `./panel-shared`, and `panel-shared.ts:7`
+  has a **top-level** `import * as vscode from 'vscode'`. Importing
+  `getRpcHandler` therefore loads `vscode` eagerly. The whole `src/core`
+  tree is genuinely clean (one lazy `require` in `rule-compiler.ts:77`),
+  but the webview-side `panel-shared` is not. Fix: alias `vscode` to a
+  stub in the standalone esbuild build and the vitest config (see
+  [specs/00-overview](specs/00-overview.md#additive-only-fork-discipline)).
+  This keeps the reuse-as-a-library strategy intact; it just needs the
+  alias to be deterministic rather than relying on tree-shaking.
 - `src/webview/shared.ts:9` calls `acquireVsCodeApi()` at module load. In a
   non-VS-Code browser this throws `ReferenceError` before any UI renders.
   Bridgeable with a polyfill (see [Webview API shim](#webview-api-shim)).
@@ -117,16 +128,23 @@ v2. Today they live in the VS Code extension: [docs link]."*
 | `rule-playground`     | Hidden from nav. Direct URL → banner.                                                |
 | `antipatterns-editor` | Hidden from nav. Direct URL → banner.                                                |
 | `data-explorer`       | Hidden from nav. Direct URL → banner.                                                |
-| `skills`              | **Visible.** Shows installed skills (read-only). "Generate skill" button → banner.   |
+| `skills`              | **Visible, catalog-browse only.** `getRegistryCatalog` (allowlisted) works; `triageSkills`/`discoverCatalog`/`installSkill`/`generateSkillContent` are disabled (triage/discover silent-disabled, generate/install banner-worthy). *(Corrected: earlier "shows installed skills read-only" overstated it — its core list came from disabled methods.)* |
 | `learning` + variants | Hidden from nav. Quiz / comparison / did-you-know are pure-LLM, no read-only path.   |
 | `dsl-reference`       | **Visible** if it's static docs (verify on first build); else hidden.                |
-| `sdlc`                | **Visible.** Read-only repo / PR data works; skill-triage pieces show banner.        |
-| Everything else       | Visible, fully functional.                                                           |
+| `sdlc`                | **Hidden.** *(Corrected: was "Visible, read-only repo/PR data works".)* Its data (`getSdlcRepoScan`/`getSdlcToolAnalysis`/`getSdlcGitHubData`) lives in the dropped `PanelRequestService`, so the page would render empty. Hidden via `HIDDEN_IN_STANDALONE_V1`; silent-disabled (no banner). |
+| `dashboard`           | **Visible.** Its skill-suggestion section (`triageSkills`/`discoverCatalog`/`triageCatalog`) is silent-disabled and renders empty; everything else works. The shim must **not** banner these (see below). |
+| Everything else       | Visible; note `config-health`'s context-review section (`reviewContextFiles`) is silent-disabled.                |
 
 The nav is hardcoded in `panel-html.ts`; the standalone HTML wrapper
-omits the hidden entries. The polyfill intercepts mutating RPC calls
-(`saveRule`, `generateRule`, etc.) and returns
-`{ error: 'standalone-v1-disabled' }` so direct deep-links never crash.
+omits the hidden entries. The **server** (dispatcher) returns a
+data-nested `{ data: { error, code: 'standalone-v1-disabled', method } }`
+for any method not in `V1_ALLOWED` or `STANDALONE_NATIVE`, so direct
+deep-links never crash. The **shim** then decides whether to show the
+roadmap banner — only for a curated `BANNER_WORTHY` set, because visible
+pages (the dashboard especially) fire disabled methods proactively and a
+blanket banner would pop on the home screen. See
+[specs/00-overview](specs/00-overview.md#disabled-method-ux-banner-vs-silent)
+and the per-page audit in [specs/08-testing](specs/08-testing.md).
 
 ## Implementation strategy
 
@@ -134,11 +152,20 @@ omits the hidden entries. The polyfill intercepts mutating RPC calls
 
 `src/webview/shared.ts:9` calls `acquireVsCodeApi()` at module-load time.
 Approach: define a `globalThis.acquireVsCodeApi` polyfill **before**
-`app.js` loads, via a tiny inline `<script>` in the standalone HTML
-wrapper.
+`app.js` loads.
+
+> **Correction (spec review): external shim, not inline.** An earlier
+> draft injected the polyfill as an *inline* `<script>`. That is
+> incompatible with the chosen CSP (`script-src 'self'`, no nonce) — the
+> browser would block it and `acquireVsCodeApi` would never be defined.
+> The shim is therefore served as an **external** `/standalone-shim.js`,
+> and the auth token is delivered via a `<meta name="coach-token">` tag
+> (the `coach_token` cookie is `HttpOnly`, so JS can't read it for the
+> `ws://…?t=` URL). See [specs/04-webview-shim](specs/04-webview-shim.md).
+> The sketch below is retained for intent only; the spec is canonical.
 
 ```ts
-// src/standalone/webview-shim.ts — emitted inline in standalone HTML
+// src/standalone/webview-shim.ts — SUPERSEDED: now an external /standalone-shim.js (reads token from <meta>)
 (() => {
   const ws = new WebSocket(`ws://${location.host}/rpc?t=${TOKEN}`);
   ws.addEventListener('message', (ev) => {
@@ -192,6 +219,17 @@ export async function dispatch(method, params, analyzer, parseResult) {
 }
 ```
 
+> **Corrections (spec review):** this sketch is two tiers short and uses
+> the wrong error shape. The real dispatcher is **three-tier** — a
+> front-of-line `STANDALONE_NATIVE` table (for `openExternal`,
+> `loadModelBudgets`, `saveModelBudgets`, which the webview calls but the
+> registry doesn't define) runs *before* the allowlist gate. And errors
+> must ride **inside `data`** (`{ data: { error, code, method } }`), not
+> as a sibling `error`: the unmodified webview reads `data.error`
+> (`shared.ts:62`); a sibling field would silently `resolve(undefined)`.
+> See [specs/02-dispatcher](specs/02-dispatcher.md) and
+> [specs/00-overview](specs/00-overview.md#rpc-contract).
+
 **Reachability caveat:** `getRuleEditor` (panel-rpc.ts:740) does
 `require('vscode')` inside try/catch. In a standalone Node process this
 will throw (no `vscode` module). The try/catch swallows it and continues
@@ -221,7 +259,7 @@ v1; revisit if the nav changes frequently.
 | Server (Express + ws)         | `src/standalone/server.ts`            | ~100 |
 | Dispatcher (allowlist bridge) | `src/standalone/dispatcher.ts`        | ~30  |
 | HTML wrapper                  | `src/standalone/standalone-html.ts`   | ~80  |
-| Polyfill (inline `<script>`)  | `src/standalone/webview-shim.ts`      | ~30  |
+| Polyfill (external `/standalone-shim.js`) | `src/standalone/webview-shim.ts`  | ~55  |
 | CLI (token, port, browser open) | `src/standalone/cli.ts` + `bin/coach` | ~80  |
 | Build glue                    | `esbuild.mjs` additions               | ~50  |
 | **Total new**                 |                                       | **~370** |
@@ -283,6 +321,12 @@ WS split.
   script-src 'self'; img-src 'self' data:; font-src 'self'` header. No
   nonce dance — the VS Code webview's CSP straitjacket doesn't apply when
   we serve `dist/webview/` as static files from our own origin.
+  **Implication (spec review):** keeping `script-src 'self'` with no nonce
+  means there can be **no inline `<script>`** — including the shim. The
+  shim is served as an external `/standalone-shim.js`; the token reaches
+  it via a `<meta name="coach-token">` tag, since the `HttpOnly` cookie is
+  unreadable from JS. "No nonce dance" holds precisely *because* we went
+  external rather than inline.
 
 ## Cache and state co-existence
 
@@ -312,13 +356,23 @@ on the same machine. Disk layout today:
   corruption proves more frequent than predicted, add lock detection in
   v1.1.
 
-Standalone startup sequence:
+Standalone startup sequence (**serve-then-parse** — corrected to match
+[specs/05-cli](specs/05-cli.md) / [specs/01-server](specs/01-server.md)):
 1. Try to bind 127.0.0.1:7331 → if taken, GET `/health` → if ours, open
    browser to the existing URL+token and exit.
-2. Read `~/.ai-engineer-coach/state.json` (model budgets, last-used filter).
-3. Try to read `~/.copilot-analytics-cache/parsed.json` — if valid,
-   hydrate immediately.
-4. Kick off parse worker for incremental updates (same as extension).
+2. Start the server **immediately** (no parsed data yet) and open the
+   browser — the webview shows its loading shell.
+3. Drive the parse (`findLogsDirs` → `parseAllLogsViaWorker` → build
+   `Analyzer`), forwarding `progress` frames to the browser.
+4. On completion, `handle.setData(analyzer, parseResult)` broadcasts
+   `dataReady` — the webview flips from loading shell to rendered
+   dashboard. (The webview gates **all** rendering on `dataReady`, which
+   is synthesized here, not emitted by any core module — so it is
+   mandatory, not a deferrable "push". Only the live `progress` bar is
+   deferrable.)
+5. Model budgets / last-used filter live in
+   `~/.ai-engineer-coach/state.json`; a warm `parsed.json` makes step 3
+   near-instant.
 
 ## Privacy commitments
 
@@ -352,7 +406,10 @@ a buried opt-out.
 | Webview CSP nonce scheme                 | ✅ Non-issue          | Standalone serves static files from own origin; standard CSP header suffices.                             |
 | Worker threads touch `vscode.workspace.fs` | ✅ Non-issue        | `parse-worker.ts`, `cache-write-worker.ts`, `warm-up-worker.ts` import only `worker_threads` / `fs` / sibling core. Zero `vscode` refs. `parse-worker.ts:26` already supports `process.send` IPC, so the worker pool is host-agnostic today. |
 | RPC method count higher than estimated   | 🟡 Adjusted           | 92 total, not ~40. ~40 needed for v1 (read-only allowlist). Mitigated by reusing existing `rpcHandlers` registry.                                                  |
-| `panel-rpc.ts` requires `vscode` at runtime | ✅ Non-issue       | The 15 vscode refs are in handlers we drop from the allowlist. Reachable `require('vscode')` in `getRuleEditor:741` is wrapped in try/catch, but the method is also excluded from the allowlist to avoid noise in logs.                |
+| `panel-rpc.ts` requires `vscode` at runtime | 🟡 Adjusted — alias stub | The lazy `require('vscode')` calls inside dropped handlers are harmless. **But** `panel-rpc.ts:39` → `panel-shared.ts:7` is a **top-level** `import * as vscode`, loaded eagerly when `getRpcHandler` is imported. Mitigated by aliasing `vscode` → `src/standalone/vscode-stub.ts` in the standalone esbuild build and vitest config (deterministic; does not rely on tree-shaking). See [specs/02-dispatcher](specs/02-dispatcher.md#transitive-vscode-import). |
+| Inline shim blocked by CSP | 🟡 Adjusted — external shim | `script-src 'self'` (no nonce) blocks an inline polyfill. The shim is served as external `/standalone-shim.js`; token via `<meta name="coach-token">`. See [specs/04-webview-shim](specs/04-webview-shim.md). |
+| `dataReady` not emitted by core | 🟡 Adjusted — synthesized by CLI | `progress`/`dataReady` were produced by the dropped `panel.ts`, not the core. The webview gates rendering on `dataReady`, so the CLI must synthesize it after parse via `handle.setData(...)`. Mandatory, not deferrable. See [specs/01-server](specs/01-server.md). |
+| Webview calls non-registry methods | 🟡 Adjusted — native table | `openExternal` + model budgets (called by visible pages) aren't in `getRpcHandler`. Reimplemented as front-of-line `STANDALONE_NATIVE` handlers. See [specs/02-dispatcher](specs/02-dispatcher.md). |
 | Webview bundle calls `acquireVsCodeApi()` at module load | ✅ Mitigated | Inline polyfill in standalone HTML defines `globalThis.acquireVsCodeApi` before `app.js` runs. Zero edits to webview bundle.                                       |
 | Concurrent cache writes (extension + standalone) | 🟡 Accepted   | No lock files in current cache code. Race window is small; corruption is self-healing via cache invalidation. Document in README. Add locking in v1.1 if real-world frequency justifies. |
 | Standalone HTML wrapper drifts from upstream nav | 🟡 Accepted  | `standalone-html.ts` duplicates `panel-html.ts` nav structure (~80 LOC). Will drift if upstream edits nav. Accepted for v1; if churn is frequent, refactor to a shared nav model.                                                 |
@@ -365,7 +422,7 @@ Rule: no edits to upstream files outside the new directories below.
 
 | Path                  | Owner    | Notes                                                            |
 |-----------------------|----------|------------------------------------------------------------------|
-| `src/standalone/`     | Fork     | New: `server.ts`, `cli.ts`, `dispatcher.ts`, `standalone-html.ts`, `webview-shim.ts`, `state.ts` |
+| `src/standalone/`     | Fork     | New: `server.ts`, `auth.ts`, `image-route.ts`, `cli.ts`, `flags.ts`, `parse-bootstrap.ts`, `dispatcher.ts`, `v1-allowed.ts`, `standalone-native.ts`, `standalone-html.ts`, `nav-config.ts`, `webview-shim.ts`, `state.ts`, `vscode-stub.ts` |
 | `bin/coach`           | Fork     | New: CLI entry script (Node shebang; npm `cmd-shim` handles Windows) |
 | `docs-fork/`          | Fork     | New: fork-specific docs (this file)                              |
 | `package.json`        | Shared   | Add `bin`, `scripts.serve`, `express` + `ws` deps only           |

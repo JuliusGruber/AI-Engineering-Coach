@@ -22,8 +22,9 @@ After this spec is implemented:
 | Path                              | Change kind | Notes                                                                 |
 |-----------------------------------|-------------|-----------------------------------------------------------------------|
 | `package.json`                    | Additive    | Add keys only; no edits to existing keys                              |
-| `esbuild.mjs`                     | Additive    | Append a new build entry; do not modify existing ones                 |
+| `esbuild.mjs`                     | Additive    | Append two new build entries (CLI + shim) + a standalone-scoped `vscode` alias; do not modify existing ones |
 | `bin/coach`                       | New         | Node shebang launcher (see [05-cli](05-cli.md))                       |
+| `src/standalone/vscode-stub.ts`   | New         | Stub that the `vscode` alias resolves to                              |
 | `.npmignore` or `package.json#files` | New/Edit | Whitelist publish payload                                             |
 
 ## package.json additions
@@ -102,6 +103,7 @@ Append a new build entry. Do not refactor existing entries.
 ```js
 // At the bottom of esbuild.mjs, alongside existing build({...}) calls:
 
+// 1) The CLI / server bundle (Node target).
 await build({
   entryPoints: ['src/standalone/cli.ts'],
   outfile: 'dist/standalone/cli.js',
@@ -114,19 +116,55 @@ await build({
     // Native or peer deps that should resolve at runtime, not be bundled:
     'fsevents',
   ],
+  alias: {
+    // REQUIRED — not optional. Importing getRpcHandler from panel-rpc
+    // transitively loads panel-shared.ts, which has a top-level
+    // `import * as vscode from 'vscode'` (panel-shared.ts:7). This alias
+    // resolves it to a harmless stub so the bundle never tries to require
+    // a real 'vscode' at runtime. Scope: this standalone build ONLY — the
+    // extension build above must keep the real external 'vscode'.
+    vscode: './src/standalone/vscode-stub.ts',
+  },
   banner: {
     js: '#!/usr/bin/env node',     // optional; bin/coach already provides shebang
   },
   minify: false,                   // readability > size for a CLI of this scale
   logLevel: 'info',
 });
+
+// 2) The webview shim (browser target → served as /standalone-shim.js).
+await build({
+  entryPoints: ['src/standalone/webview-shim.ts'],
+  outfile: 'dist/standalone/standalone-shim.js',
+  platform: 'browser',
+  target: 'es2020',
+  format: 'iife',
+  bundle: true,
+  sourcemap: false,
+  minify: false,
+  logLevel: 'info',
+});
+```
+
+`vscode-stub.ts` is a new fork file:
+
+```ts
+// src/standalone/vscode-stub.ts
+// Resolves the transitive `import * as vscode` from reused webview files
+// (panel-shared.ts:7) to a harmless object in the standalone build/tests.
+// Nothing in the standalone code path actually calls into it.
+export {};               // empty module; namespace import yields {}
+export default {};
 ```
 
 Notes for the implementing agent:
 
 - `dist/webview/app.js` and `dist/webview/styles.css` are produced by
   the **existing** esbuild entry (untouched). The standalone server
-  serves them as static files; no second webview build is needed.
+  serves them as static files; no second *webview-app* build is needed.
+- The shim (`dist/standalone/standalone-shim.js`) is a **separate, tiny**
+  browser build (entry 2 above) — it is not part of the webview app
+  bundle and not part of the Node CLI bundle.
 - If the upstream esbuild config uses a `--target=` CLI flag for build
   selection, the new `build:standalone` script must follow that
   convention. Inspect `esbuild.mjs` at impl time and adapt; do not
@@ -139,7 +177,8 @@ Notes for the implementing agent:
 | CJS vs ESM output                     | CJS                                      | `bin/coach` uses `require(...)`; CJS avoids loader headaches across Node 20.x patch versions |
 | Minify CLI                            | No                                       | Readable stack traces > bytes saved for a tool that runs once per session |
 | Source maps                           | No                                       | Same reason; reduces tarball size |
-| External `vscode`                     | Not needed                               | Standalone code does not import `vscode`; if any transitive import sneaks in, esbuild's bundle resolution fails loudly (catches a bug) |
+| `vscode` resolution (standalone build) | **Alias to `vscode-stub.ts`**           | `panel-rpc` transitively pulls a top-level `import * as vscode` via `panel-shared.ts:7`. Relying on tree-shaking is fragile and breaks vitest; the alias makes the import resolve to a stub deterministically. Scoped to the standalone entry only — the extension build keeps real external `vscode`. |
+| Shim build target                     | Separate `browser`/`iife` esbuild entry | The shim runs in the browser as `/standalone-shim.js`; it cannot share the Node CLI bundle |
 | Watch mode for dev                    | `node --watch`                           | Avoid adding `tsx`/`tsup`/`nodemon` deps; Node 20+ ships `--watch` |
 
 ## bin/coach
@@ -166,9 +205,15 @@ no platform-specific work needed.
 ## Acceptance criteria
 
 1. `npm run build` (the existing script) followed by
-   `npm run build:standalone` produces `dist/standalone/cli.js` and
-   leaves all existing `dist/*` outputs unchanged.
+   `npm run build:standalone` produces `dist/standalone/cli.js` **and**
+   `dist/standalone/standalone-shim.js`, and leaves all existing `dist/*`
+   outputs (including the extension bundle) unchanged.
 2. `node dist/standalone/cli.js --version` prints the package version.
+2a. `node -e "require('./dist/standalone/cli.js')"` (bare import, no
+    `vscode` available) does **not** throw — proves the `vscode` alias
+    neutralized the transitive `panel-shared` import in the bundle.
+2b. The extension bundle still references `vscode` as an external/runtime
+    require (the standalone alias did not leak into it).
 3. `npm pack --dry-run` (`npm run pack:check`) lists exactly:
    - `dist/standalone/**`
    - `dist/webview/**`
