@@ -10,6 +10,6 @@ skipped until the plan is written.
 - [x] grilled — 04-webview-shim.plan.md
 - [x] grilled — 03-standalone-html.plan.md
 - [x] grilled — 01-server.plan.md
-- [ ] 05-cli
+- [x] grilled — 05-cli.plan.md
 - [ ] 07-build
 - [ ] 08-testing
