@@ -11,5 +11,5 @@ skipped until the plan is written.
 - [x] grilled — 03-standalone-html.plan.md
 - [x] grilled — 01-server.plan.md
 - [x] grilled — 05-cli.plan.md
-- [ ] 07-build
+- [x] grilled — 07-build.plan.md
 - [ ] 08-testing
