@@ -9,7 +9,7 @@ are blocked, not skipped.
 
 - [x] implemented — 06-state.plan.md
 - [x] implemented — 02-dispatcher.plan.md
-- [ ] 04-webview-shim
+- [x] implemented — 04-webview-shim.plan.md
 - [ ] 03-standalone-html
 - [ ] 01-server
 - [ ] 05-cli
