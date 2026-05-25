@@ -127,6 +127,21 @@ async function listenWithRetry(server: http.Server, startPort: number): Promise<
   );
 }
 
+interface RpcResponseFrame {
+  type: 'response';
+  id: string | null;
+  data: unknown;
+}
+
+// Map the dispatcher's clean union to the webview wire shape. Errors ride INSIDE
+// data (00-overview RPC contract); data.error must be a truthy string even for a
+// disabled method (which carries no message) or the webview resolves undefined.
+function toResponse(id: string | null, result: DispatchResult): RpcResponseFrame {
+  if (result.ok) return { type: 'response', id, data: result.data };
+  const { code, method, message } = result.error;
+  return { type: 'response', id, data: { error: message ?? `request failed (${code})`, code, method } };
+}
+
 interface RpcDeps {
   token: string;
   clients: Set<WebSocket>;
@@ -134,17 +149,42 @@ interface RpcDeps {
   isPresent: () => boolean;
 }
 
-// Minimal for now: track clients + ping for liveness. Auth, the message loop, and
-// connect-time dataReady are added in Tasks 5 and 6.
 function attachRpcServer(server: http.Server, deps: RpcDeps): WebSocketServer {
   const wss = new WebSocketServer({ server, path: '/rpc' });
   const alive = new WeakMap<WebSocket, boolean>();
 
-  wss.on('connection', (socket) => {
+  wss.on('connection', (socket, req) => {
+    const url = new URL(req.url ?? '/rpc', `http://${HOST}`);
+    const t = url.searchParams.get('t') ?? '';
+    if (t.length !== deps.token.length || !timingSafeEqual(Buffer.from(t), Buffer.from(deps.token))) {
+      socket.close(4001, 'unauthorized');
+      return;
+    }
+
     deps.clients.add(socket);
     alive.set(socket, true);
     socket.on('pong', () => alive.set(socket, true));
     socket.on('close', () => deps.clients.delete(socket));
+
+    socket.on('message', (raw) => {
+      void (async () => {
+        let msg: unknown;
+        try {
+          msg = JSON.parse(raw.toString());
+        } catch {
+          socket.send(JSON.stringify({ type: 'response', id: null, data: { error: 'invalid json', code: 'bad-request' } }));
+          return;
+        }
+        const env = msg as { type?: unknown; id?: unknown; method?: unknown; params?: unknown };
+        if (env?.type !== 'request' || typeof env.id !== 'string' || typeof env.method !== 'string') {
+          const id = typeof env?.id === 'string' ? env.id : null;
+          socket.send(JSON.stringify({ type: 'response', id, data: { error: 'bad request envelope', code: 'bad-request' } }));
+          return;
+        }
+        const result = await dispatch(env.method, env.params, deps.current());
+        socket.send(JSON.stringify(toResponse(env.id, result)));
+      })();
+    });
   });
 
   const heartbeat = setInterval(() => {
