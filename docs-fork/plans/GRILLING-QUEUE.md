@@ -2,7 +2,7 @@
 
 Topological order from `docs-fork/specs/00-overview.md` (the dependency TABLE,
 not the filename numbering) — same order as `PLAN-QUEUE.md`. One plan grilled per
-invocation via `grill-prompt.md`. Entries whose `.plan.md` does not yet exist are
+invocation via `plan-grilling-prompt.md`. Entries whose `.plan.md` does not yet exist are
 skipped until the plan is written.
 
 - [ ] 06-state
