@@ -16,8 +16,8 @@ GOAL OF EACH GRILL — answer ONE question:
   Implementation-ready = a competent engineer who was NOT in this conversation
   could execute every task in order, using ONLY the file paths, commands,
   interfaces, and types written in the plan (plus its named dependency plans and
-  docs-fork/CONTEXT.md), and reach the intended result WITHOUT inventing a
-  decision or guessing a contract.
+  docs-fork/specs/00-overview.md), and reach the intended result WITHOUT
+  inventing a decision or guessing a contract.
 
 TRIAGE BEFORE YOU ASK — classify every issue you spot:
   BLOCKING     stops execution or forces the implementer to invent a decision:
@@ -25,17 +25,13 @@ TRIAGE BEFORE YOU ASK — classify every issue you spot:
                interface/type/signature/data shape defined nowhere reachable; a
                placeholder / "TBD" / "figure out later" step; a command that
                won't run as written; a dependency on a decision not yet settled
-               in the depended-on plan or CONTEXT.md; a success criterion with no
+               in the depended-on plan; a success criterion with no
                objective check; an ordering hazard (a step needs an artifact only
                produced later).
   NON-BLOCKING terminology drift that's still unambiguous; naming taste; doc
                polish; optional nice-to-haves.
   Grill ONLY on BLOCKING issues. Do NOT interview me about NON-BLOCKING ones —
   just list them in the report. Relentless on blockers, silent on cosmetics.
-
-READ-ONLY REFERENCES (grill-me does not edit docs):
-  - Glossary / interface names:  docs-fork/CONTEXT.md   (NOT repo-root CONTEXT.md)
-  - Prior decisions:             docs-fork/adr/         (NOT docs/adr/)
 
 QUEUE FILE: docs-fork/plans/GRILLING-QUEUE.md
 If it does not exist, create it first with one checkbox line per spec in the
@@ -56,7 +52,7 @@ EACH RUN:
      (Plans are still being written; skip [ ] entries whose .plan.md is absent
      and report that they are not yet grillable.) That plan is the only one you
      grill this run.
-  2. Read that plan + docs-fork/specs/00-overview.md + docs-fork/CONTEXT.md +
+  2. Read that plan + docs-fork/specs/00-overview.md +
      the .plan.md of every plan it depends on — enough to tell a real cross-plan
      blocker from a non-issue.
   3. Invoke grill-me against that plan file. Interview me one question at a time,
