@@ -11,6 +11,19 @@ Provide a single small module that owns the two JSON files under
 default values, and corruption recovery so callers never touch
 `fs.readFileSync` directly.
 
+## Consumers
+
+`UserState.modelBudgets` is read and written by the `loadModelBudgets` /
+`saveModelBudgets` **native handlers** in
+[02-dispatcher](02-dispatcher.md#standalone-native-handlers-standalone_native)
+— the standalone replacement for `panel.ts`'s `globalState`-backed budget
+persistence. `loadModelBudgets` returns `readUserState().modelBudgets`
+**unwrapped** (matching `panel.ts:339`); `saveModelBudgets` does a
+read-modify-`writeUserState` and returns `{ ok: true }`. `ServerState` is
+consumed by [01-server](01-server.md) (single-instance handshake) and
+[05-cli](05-cli.md) (boot). No other writers exist in v1, which is why the
+no-locking decision below holds.
+
 ## Files
 
 | Path                                | Purpose                          | LOC |

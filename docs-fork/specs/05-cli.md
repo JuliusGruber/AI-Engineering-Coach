@@ -96,15 +96,28 @@ Deferred to v2 (any of these on the v1 CLI → unknown-flag error):
 4. Try `probeExistingInstance(flags.port)` from [01-server](01-server.md).
    - If it returns a URL: print URL to stderr, open browser unless
      `--no-open`, return 0. **Do not spawn the parse worker pool.**
-5. Else: spawn the existing core parse worker (same pattern as
-   `extension.ts` uses), build the `Analyzer` + initial `ParseResult`,
-   then call `createServer({ port, token?, analyzer, parseResult, logFile })`.
-6. Print URL to stderr.
-7. Open browser via `open` npm package unless `--no-open`. Browser
-   open errors → log warning to stderr, continue.
+5. Else (**serve-then-parse**): call
+   `createServer({ port, token?, logFile })` **without** `analyzer`/
+   `parseResult`. The server binds and begins serving immediately; the
+   browser will show the webview's loading shell.
+6. Print URL to stderr and open the browser via `open` unless
+   `--no-open` (browser-open errors → warn, continue). Do this **now**,
+   before the parse, so the loading shell + progress bar appear while
+   parsing runs.
+7. Drive the parse:
+   `bootstrapParse(p => handle.broadcast({ type: 'progress', ...p }))`.
+   On completion call `handle.setData(analyzer, parseResult)`, which
+   broadcasts `dataReady` to the already-open browser — flipping it from
+   loading shell to rendered dashboard. (This mirrors `panel.ts`'s
+   `loadData`: parse with a progress callback, then signal ready.)
 8. Install `SIGINT` / `SIGTERM` handlers → call `handle.close()` then
    exit 0.
 9. Keep the process alive on the server handle.
+
+The progress forwarding in step 7 is the only deferrable piece (see
+[01-server](01-server.md)): if dropped, the browser sits on the loading
+shell until `dataReady`, then renders. `setData`/`dataReady` are **not**
+deferrable.
 
 ### Output streams
 
@@ -173,6 +186,28 @@ from `extension.ts` (boot + result handling), not by editing
 with a comment naming the source lines, so a future "shared bootstrap"
 refactor in upstream is mechanical.
 
+`bootstrapParse` takes a progress callback and resolves with the built
+analyzer + parse result — the same shape `panel.ts:215` feeds to
+`parseAllLogsViaWorker`, then `new Analyzer(...)` (`panel.ts:224`):
+
+```ts
+// src/standalone/parse-bootstrap.ts
+import type { Analyzer } from '../core/analyzer';
+import type { ParseResult } from '../core/parser';
+
+type ProgressFn = (p: { phase: number; pct: number; detail?: string; [k: string]: unknown }) => void;
+
+export async function bootstrapParse(
+  onProgress: ProgressFn,
+): Promise<{ analyzer: Analyzer; parseResult: ParseResult }>;
+```
+
+It reuses the core `findLogsDirs()` + `parseAllLogsViaWorker(dirs,
+onProgress)` (both vscode-free) and constructs the `Analyzer` exactly as
+the panel does. If `findLogsDirs()` returns nothing, it resolves with an
+empty `ParseResult` so the dashboard still renders an empty state rather
+than hanging.
+
 ## Code sketch — main flow
 
 ```ts
@@ -203,11 +238,17 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   const token = flags.rotateToken ? crypto.randomBytes(32).toString('hex') : undefined;
-  const { analyzer, parseResult } = await bootstrapParse();
-  const handle = await createServer({ port: flags.port, token, analyzer, parseResult, logFile: flags.logFile ?? undefined });
 
+  // Serve first — the browser shows a loading shell while we parse.
+  const handle = await createServer({ port: flags.port, token, logFile: flags.logFile ?? undefined });
   process.stderr.write(`coach running at ${handle.url}\n`);
   if (flags.open) try { await open(handle.url); } catch (e) { process.stderr.write(`(browser open failed: ${(e as Error).message})\n`); }
+
+  // Then parse, forwarding progress; setData broadcasts dataReady.
+  const { analyzer, parseResult } = await bootstrapParse(
+    (p) => handle.broadcast({ type: 'progress', ...p }),
+  );
+  handle.setData(analyzer, parseResult);
 
   installShutdownHandlers(handle);
   return await waitForExit(handle);
@@ -221,6 +262,10 @@ export async function runCli(argv: string[]): Promise<number> {
 3. `coach --made-up-flag` prints an error, exits 2.
 4. `coach` (no args) on a clean machine boots the server, prints a URL
    to stderr, opens the browser, and runs until SIGINT.
+4a. The server answers GET `/` (loading shell) **before** the parse
+    finishes — i.e. `createServer` is awaited before `bootstrapParse`.
+    After `bootstrapParse` resolves, `handle.setData(...)` is called
+    exactly once (broadcasts `dataReady`).
 5. A second `coach` invocation while the first is alive prints
    "already running at …" to stderr, opens the same URL in the browser,
    exits 0.

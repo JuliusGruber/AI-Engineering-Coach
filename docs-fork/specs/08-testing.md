@@ -33,6 +33,29 @@ multiple modules.
 
 ## Test layers
 
+### Layer 0: first-build per-page RPC audit (one-time, gated)
+
+Before the Playwright list is finalized, the implementing agent performs a
+mechanical audit that pins the visibility decisions to evidence:
+
+1. For **every** page id in `ALL_NAV_ENTRIES`, grep its `page-*.ts` for
+   `rpc('…')` / `rpcAllSettled([... 'method' ...])` calls.
+2. Classify each method into one of four buckets:
+   - **registry-allowlisted** (`V1_ALLOWED`) — works.
+   - **native** (`STANDALONE_NATIVE`) — works.
+   - **silent-disabled** — degrades the section quietly.
+   - **banner-worthy** — user-initiated; shows the roadmap banner.
+3. **Decision rule:** any page whose *primary* data source is
+   silent-disabled (e.g. `sdlc`) moves to `HIDDEN_IN_STANDALONE_V1`.
+   Pages that merely have a *secondary* degrading section (dashboard's
+   skill suggestions, `config-health`'s context review) stay visible.
+4. Record the audit table in the PR description and reconcile it against
+   the feasibility doc's page-visibility table.
+
+This is the same audit referenced by
+[03-standalone-html](03-standalone-html.md) and is the guard that catches
+a future upstream page added with a disabled data source.
+
 ### Layer 1: unit (vitest)
 
 Each per-module spec already enumerates its unit test cases. This spec
@@ -41,6 +64,13 @@ does not duplicate the list — it sets the conventions:
 - Framework: **vitest** (already in upstream `package.json`).
 - Environment: `node` for server / dispatcher / state / cli / flags;
   `jsdom` for webview-shim and standalone-html.
+- **`vscode` alias (required).** The vitest config adds
+  `resolve.alias: { vscode: <abs path to src/standalone/vscode-stub.ts> }`.
+  Without it, any test that imports the real `panel-rpc` (e.g. the
+  dispatcher round-trip, the server integration test) fails to resolve
+  the transitive top-level `import * as vscode` in `panel-shared.ts:7`.
+  With it, those tests exercise the **real** upstream handlers instead of
+  mocks. Mirrors the esbuild alias in [07-build](07-build.md).
 - Mocks: prefer `vi.mock(...)` over real network or filesystem when
   possible. The state-module tests use a tmpdir via
   `os.tmpdir()` + per-test cleanup.
@@ -57,13 +87,17 @@ messages), HTTP probes to `/health` and `/`, and exit codes.
 
 | Test name                                       | Intent                                                      |
 |-------------------------------------------------|-------------------------------------------------------------|
+| `bundle imports in bare node without vscode`    | `require('dist/standalone/cli.js')` does not throw (vscode-alias regression guard; mirrors [07-build](07-build.md) AC 2a) |
 | `cli boots and serves health`                   | Fork CLI, fetch `/health`, assert payload                   |
+| `serves loading shell before parse completes`   | GET `/` returns 200 immediately after boot, before `dataReady` |
+| `dataReady arrives over WS after parse`         | WS client connects, receives `{type:'dataReady'}` once parse finishes |
 | `cli prints url to stderr`                      | Regex match on captured stderr                              |
 | `second cli reuses first`                       | Fork two children, assert second exits 0 in < 1 s           |
 | `cli responds to SIGINT with code 130`          | Send signal, assert exit code, assert `server-state.json` cleared |
 | `cli with --port honors override`               | Probe non-default port                                      |
 | `cli with --no-open does not spawn browser`     | `OPEN` env var (provided to `open` lib's fallback) is unused; mock via PATH manipulation |
-| `cli reports unknown method error envelope`     | WebSocket client sends `{method:'saveRule'}`; asserts envelope |
+| `disabled method returns data-nested error`     | WS client sends `{method:'saveRule'}`; asserts `{type:'response', id, data:{error, code:'standalone-v1-disabled', method}}` |
+| `native loadModelBudgets works before dataReady`| WS sends `loadModelBudgets` immediately; asserts `{}` (no analyzer needed) |
 | `port collision retries +1..+9 then fails`      | Pre-bind two probe servers on 7331..7340, assert exit 1     |
 
 Set `COACH_HOME=<tmpdir>` env var support in [05-cli](05-cli.md)? **No
@@ -90,13 +124,21 @@ Setup:
    - Wait for `main#coach-main` to be populated (selector exists +
      children > 0).
    - Assert page console contains zero `error`-level entries.
-4. Additionally, for each entry in `HIDDEN_IN_STANDALONE_V1`:
-   - Navigate to `#<id>`.
-   - Trigger any RPC call the page makes on mount (most disabled pages
-     make a fetch on render; for the few that do not, the test
-     manually `postMessage`'s a request for a known-disabled method).
-   - Assert the shim-injected `#coach-roadmap-banner` element exists
-     in the DOM (see [04-webview-shim](04-webview-shim.md) behavior 9).
+4. Banner behavior depends on *why* a page is hidden (see
+   [03-standalone-html](03-standalone-html.md) — two reasons):
+   - **Authoring/LLM hidden pages** (`rule-editor`, `rule-playground`,
+     `antipatterns-editor`, `data-explorer`, `learning`): navigate to
+     `#<id>`, trigger a **banner-worthy** disabled method (the page fires
+     one on mount; if not, `postMessage` a known banner-worthy method like
+     `getRuleEditor`), and assert `#coach-roadmap-banner` exists.
+   - **`sdlc`** (hidden because its data source is silent-disabled):
+     navigate to `#sdlc`, assert the page renders **without** crashing
+     and **without** a banner (its methods are silent-disabled).
+5. **Dashboard must NOT show the banner.** Navigate to `#dashboard`,
+   let it fire its proactive `triageSkills`/`discoverCatalog`/
+   `triageCatalog` calls, and assert `#coach-roadmap-banner` is **absent**
+   — the regression guard for the curated-banner decision
+   ([00-overview](00-overview.md#disabled-method-ux-banner-vs-silent)).
 
 Acceptance: all assertions pass on the first browser (Chromium). Cross-
 browser is **not** required in v1.
@@ -176,6 +218,12 @@ Decisions on the matrix:
 6. Modifying `V1_ALLOWED` to remove a method causes the relevant
    per-module unit test to fail (verified by the "exactly 40" assertion
    in [02-dispatcher](02-dispatcher.md)).
+7. `require('dist/standalone/cli.js')` in a bare Node process (no
+   `vscode` module present) does not throw — the `vscode`-alias
+   regression guard.
+8. The Playwright suite asserts `#coach-roadmap-banner` is **absent** on
+   `#dashboard` and **present** on a deep-linked banner-worthy hidden
+   page — the curated-banner regression guard.
 
 ## Test plan
 
