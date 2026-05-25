@@ -5,8 +5,8 @@ not the filename numbering) — same order as `PLAN-QUEUE.md`. One plan grilled 
 invocation via `plan-grilling-prompt.md`. Entries whose `.plan.md` does not yet exist are
 skipped until the plan is written.
 
-- [ ] 06-state
-- [ ] 02-dispatcher
+- [x] grilled — 06-state.plan.md
+- [x] grilled — 02-dispatcher.plan.md
 - [ ] 04-webview-shim
 - [ ] 03-standalone-html
 - [ ] 01-server

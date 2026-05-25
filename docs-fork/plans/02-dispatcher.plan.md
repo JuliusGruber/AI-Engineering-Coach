@@ -542,6 +542,13 @@ which validates `http:`/`https:` via `new URL()` then shells out with `open`
 (spec acceptance #6; tests `openExternal rejects non-http(s) url`,
 `openExternal rejects unparseable url`, `openExternal opens http(s) url once`).
 
+> `open@10` (the installed range `^10.1.0` resolves to 10.2.0) takes the URL as a
+> single argument: `open(url)`. The `{ url: true }` option existed in `open@6` and
+> was removed in v7 — URLs are now auto-detected — so it is **not** in v10's
+> `Options` type and would fail `tsc --noEmit` under `strict` (Task 6 Step 2). Pass
+> only the validated href; the http(s) scheme check above rules out any
+> filesystem-path ambiguity.
+
 **Files:**
 - Create: `src/standalone/standalone-native.ts`
 - Test: `src/standalone/__tests__/standalone-native.test.ts`
@@ -591,11 +598,11 @@ describe('STANDALONE_NATIVE.openExternal', () => {
     expect(mockedOpen).not.toHaveBeenCalled();
   });
 
-  it('opens an http(s) url exactly once with {url:true}', async () => {
+  it('opens an http(s) url exactly once', async () => {
     const res = await STANDALONE_NATIVE.openExternal({ url: 'https://example.com' });
     expect(res).toEqual({ ok: true, data: { ok: true } });
     expect(mockedOpen).toHaveBeenCalledTimes(1);
-    expect(mockedOpen).toHaveBeenCalledWith('https://example.com/', { url: true });
+    expect(mockedOpen).toHaveBeenCalledWith('https://example.com/');
   });
 });
 ```
@@ -637,7 +644,7 @@ export const STANDALONE_NATIVE: Record<string, NativeHandler> = {
       // Block file: / vscode: / custom-scheme handlers — `open` shells out to the OS.
       return { ok: false, error: { code: 'bad-request', method: 'openExternal', message: 'only http(s) urls allowed' } };
     }
-    await open(parsed.href, { url: true }); // {url:true} → never treated as a filesystem path
+    await open(parsed.href); // open@10 auto-detects URLs; the http(s) scheme is already validated above
     return { ok: true, data: { ok: true } };
   },
 };
@@ -864,3 +871,7 @@ as real code in Task 5 (not a placeholder return).
 - This plan front-loads `open`, `vscode-stub.ts`, and the vitest `vscode` alias
   (Task 1) because the dispatcher is the first module that needs them; they are
   idempotent with `07-build`/`08-testing`.
+- `openExternal` calls `open(parsed.href)` with no options. The spec/early-draft
+  `{ url: true }` argument is dropped: `open@10`'s `Options` type has no `url`
+  field (removed in v7), so it would fail strict `tsc --noEmit`. v10 auto-detects
+  URLs, so a validated http(s) string opens in the default browser unchanged.
