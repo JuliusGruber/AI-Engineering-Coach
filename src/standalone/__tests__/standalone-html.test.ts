@@ -104,3 +104,24 @@ describe('renderStandaloneHtml — Transform 2: external scripts', () => {
     );
   });
 });
+
+describe('renderStandaloneHtml — whole-output properties', () => {
+  it('renders a well-formed HTML document', () => {
+    const html = renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' });
+    const doc = new JSDOM(html).window.document;
+    expect(doc.doctype?.name).toBe('html');
+    expect(doc.documentElement.tagName).toBe('HTML');
+    expect(doc.head).not.toBeNull();
+    expect(doc.body).not.toBeNull();
+    // Structural sanity: the body parsed into the nodes app.js targets.
+    expect(doc.querySelector('main#content')).not.toBeNull();
+    expect(doc.querySelector('nav#sidebar')).not.toBeNull();
+  });
+
+  it('is deterministic for the same input (the nonce never survives)', () => {
+    const a = renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' });
+    const b = renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' });
+    expect(a).toBe(b);
+    expect(a).not.toContain('nonce'); // both nonce sites (CSP + script) were stripped
+  });
+});
