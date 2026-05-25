@@ -9,8 +9,13 @@ build. Strict compliance with the additive-only rule in
 
 After this spec is implemented:
 
-- `npm run build` produces the existing extension dist **and**
-  `dist/standalone/cli.js`.
+- `npm run build` produces the existing extension dist **and** the
+  standalone outputs under `dist/standalone/`: `cli.js`,
+  `standalone-shim.js`, the three core Worker scripts (`parse-worker.js`,
+  `warm-up-worker.js`, `cache-write-worker.js`), and the built-in
+  `rules/`+`metrics/` markdown. (The workers and rule/metric data must sit
+  under `dist/standalone/` because the CLI bundle resolves them relative to
+  its runtime `__dirname` — see "esbuild.mjs additions" below.)
 - `npm run serve` runs the CLI from source for local dev.
 - `npm pack` produces a tarball that publishes correctly to
   `@JuliusGruber/ai-engineer-coach`.
@@ -145,6 +150,42 @@ await build({
   minify: false,
   logLevel: 'info',
 });
+
+// 3-5) The three core Worker scripts the CLI spawns by __dirname-relative path at
+// runtime: parse-worker (parser.ts:638, child_process.fork, ON the standalone parse
+// path via parse-bootstrap.ts), warm-up-worker (analyzer.ts:135), cache-write-worker
+// (cache.ts:317). The CLI bundle's runtime __dirname is dist/standalone/, so the
+// workers MUST live there — the extension's copies in dist/ are not on the standalone
+// bundle's path. Mirror the existing extension worker entries (node/es2022/cjs,
+// external:['vscode'] — the parse pipeline is vscode-free as a forked child, proven
+// by the extension already forking dist/parse-worker.js) with sourcemap:false.
+for (const name of ['parse-worker', 'warm-up-worker', 'cache-write-worker']) {
+  await build({
+    entryPoints: [`src/core/${name}.ts`],
+    outfile: `dist/standalone/${name}.js`,
+    platform: 'node',
+    target: 'es2022',
+    format: 'cjs',
+    bundle: true,
+    sourcemap: false,
+    external: ['vscode'],
+    logLevel: 'info',
+  });
+}
+
+// Built-in rules + metrics: rule-loader.ts reads them from __dirname/{rules,metrics}.
+// registerAllBuiltinRules/Metrics fire as a MODULE-LOAD side effect of
+// detector-registry.ts, which is pulled in by BOTH `new Analyzer(...)` and the
+// dispatch path (panel-rpc.ts), and the dashboard's getAntiPatterns depends on them.
+// Copy the markdown into dist/standalone/ so the CLI bundle finds it and `files`
+// ships it (the extension's own copies in dist/{rules,metrics} stay untouched).
+for (const [srcDir, ext] of [['src/core/rules', '.md'], ['src/core/metrics', '.metric.md']]) {
+  const destDir = path.join('dist/standalone', path.basename(srcDir));
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const file of fs.readdirSync(srcDir).filter(f => f.endsWith(ext))) {
+    fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+  }
+}
 ```
 
 `vscode-stub.ts` is a new fork file. It is **not** an empty module: the
@@ -180,6 +221,15 @@ Notes for the implementing agent:
 - The shim (`dist/standalone/standalone-shim.js`) is a **separate, tiny**
   browser build (entry 2 above) — it is not part of the webview app
   bundle and not part of the Node CLI bundle.
+- The three Worker bundles and the `rules/`+`metrics/` copy **must** land
+  under `dist/standalone/` (not `dist/`): the CLI bundle's runtime
+  `__dirname` is `dist/standalone/`, and the reused core resolves workers
+  via `path.join(__dirname, '<name>.js')` and built-in rules/metrics via
+  `__dirname/{rules,metrics}`. Omitting them makes `coach` crash on the
+  first real parse (missing `parse-worker.js`, no in-process fallback) and
+  renders the dashboard's anti-pattern/metric data empty. The `files`
+  allowlist's `dist/standalone/` entry then ships them with no further
+  change.
 - If the upstream esbuild config uses a `--target=` CLI flag for build
   selection, the new `build:standalone` script must follow that
   convention. Inspect `esbuild.mjs` at impl time and adapt; do not
@@ -194,6 +244,7 @@ Notes for the implementing agent:
 | Source maps                           | No                                       | Same reason; reduces tarball size |
 | `vscode` resolution (standalone build) | **Alias to `vscode-stub.ts`**           | `panel-rpc` transitively pulls a top-level `import * as vscode` via `panel-shared.ts:7`. Relying on tree-shaking is fragile and breaks vitest; the alias makes the import resolve to a stub deterministically. Scoped to the standalone entry only — the extension build keeps real external `vscode`. |
 | Shim build target                     | Separate `browser`/`iife` esbuild entry | The shim runs in the browser as `/standalone-shim.js`; it cannot share the Node CLI bundle |
+| Worker scripts + built-in rule/metric data | Re-bundle the three `src/core` workers to `dist/standalone/` and copy `rules/`+`metrics/` there | The CLI bundle's `__dirname` is `dist/standalone/`; the reused core spawns workers (`parser.ts:638` etc.) and reads rule/metric markdown (`rule-loader.ts`, fired by `detector-registry.ts` on module load) relative to `__dirname`. Placing them under `dist/standalone/` satisfies both runtime resolution and the `files` allowlist; the workers keep `external:['vscode']` (vscode-free as forked children) |
 | Watch mode for dev                    | `node --watch`                           | Avoid adding `tsx`/`tsup`/`nodemon` deps; Node 20+ ships `--watch` |
 
 ## bin/coach
@@ -220,9 +271,11 @@ no platform-specific work needed.
 ## Acceptance criteria
 
 1. `npm run build` (the existing script) followed by
-   `npm run build:standalone` produces `dist/standalone/cli.js` **and**
-   `dist/standalone/standalone-shim.js`, and leaves all existing `dist/*`
-   outputs (including the extension bundle) unchanged.
+   `npm run build:standalone` produces, under `dist/standalone/`, `cli.js`,
+   `standalone-shim.js`, the three Worker scripts (`parse-worker.js`,
+   `warm-up-worker.js`, `cache-write-worker.js`), and the `rules/`+`metrics/`
+   markdown — and leaves all existing `dist/*` outputs (including the
+   extension bundle and its `dist/{rules,metrics}` copies) unchanged.
 2. `node dist/standalone/cli.js --version` prints the package version.
 2a. `node -e "require('./dist/standalone/cli.js')"` (bare import, no
     `vscode` available) does **not** throw — proves the `vscode` alias
@@ -230,11 +283,13 @@ no platform-specific work needed.
 2b. The extension bundle still references `vscode` as an external/runtime
     require (the standalone alias did not leak into it).
 3. `npm pack --dry-run` (`npm run pack:check`) lists exactly:
-   - `dist/standalone/**`
+   - `dist/standalone/**` (CLI, shim, the three Worker scripts, and
+     `rules/*.md` + `metrics/*.metric.md`)
    - `dist/webview/**`
    - `bin/coach`
    - `LICENSE`, `NOTICE`, `README.md`, `package.json`
-   No other paths.
+   No other paths — in particular no `dist/extension.js`, no
+   `dist/*-worker.js` at the `dist/` root, and no `src/`.
 4. `git diff upstream/main -- src/` shows only additions under
    `src/standalone/`.
 5. `git diff upstream/main -- package.json esbuild.mjs` shows additions
@@ -242,13 +297,20 @@ no platform-specific work needed.
    `name` rename is the documented exception).
 6. `npm install -g .` (from a packed tarball) installs `coach` and the
    command is available on PATH.
+7. The CLI's runtime assets resolve from its bundle dir:
+   `dist/standalone/parse-worker.js` (and the two sibling workers) plus
+   `dist/standalone/{rules,metrics}/` exist beside `dist/standalone/cli.js`
+   — the `__dirname` the bundled core forks/reads. The end-to-end
+   fork-and-parse round-trip (and the rule-backed dashboard) is verified by
+   [08-testing](08-testing.md)'s smoke layer.
 
 ## Test plan
 
 | Test                                   | Mechanism                                                       |
 |----------------------------------------|-----------------------------------------------------------------|
-| Tarball contents                       | CI step: `npm pack`, untar to `/tmp/x`, assert manifest         |
+| Tarball contents                       | CI step: `npm pack`, untar to `/tmp/x`, assert manifest (incl. workers + `rules/` + `metrics/` under `dist/standalone/`) |
 | `coach --version` after global install | CI step: install tarball into a clean container, exec `coach`   |
+| Runtime-asset co-location              | CI step: assert `parse-worker.js` + `rules/` + `metrics/` sit beside `cli.js` under `dist/standalone/` |
 | Upstream-diff guard                    | CI step: `git diff upstream/main --stat -- src/` → fails on any non-`src/standalone/` line |
 | Build idempotency                      | CI step: run build twice, assert byte-identical `dist/standalone/cli.js` |
 

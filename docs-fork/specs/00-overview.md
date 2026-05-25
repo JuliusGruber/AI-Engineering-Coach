@@ -251,10 +251,17 @@ contract. Two files are shared and may be **additively** edited:
 - `package.json` — add only: `bin`, three deps (`express`, `ws`, `open`),
   scripts `serve` and `dev:standalone`, `files` array entries for the
   new dist paths. Do not touch existing keys.
-- `esbuild.mjs` — add only: new entries for `src/standalone/cli.ts` and
-  the external shim, plus a `vscode` → `src/standalone/vscode-stub.ts`
-  **alias scoped to the standalone entry only** (the extension build must
-  keep the real external `vscode`). Do not modify existing entries.
+- `esbuild.mjs` — add only: new entries for `src/standalone/cli.ts`, the
+  external shim, and re-bundles of the three `src/core` Worker scripts
+  (`parse-worker`/`warm-up-worker`/`cache-write-worker`) to
+  `dist/standalone/` (the CLI bundle's runtime `__dirname`); a copy of the
+  built-in `rules/`+`metrics/` markdown into `dist/standalone/`; and a
+  `vscode` → `src/standalone/vscode-stub.ts` **alias scoped to the
+  standalone CLI entry only** (the extension build must keep the real
+  external `vscode`). Do not modify existing entries. The standalone CLI
+  resolves its workers and rule/metric data relative to `__dirname` =
+  `dist/standalone/`, so they must be emitted there (see
+  [07-build](07-build.md)).
 - the test config (vitest) — add only: a matching `resolve.alias`
   mapping `vscode` to the stub, so tests that import the real
   `panel-rpc` library do not fail to resolve `vscode`.
