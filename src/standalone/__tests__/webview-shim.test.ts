@@ -168,3 +168,25 @@ describe('outbound buffer + localStorage state', () => {
     expect(api.getState()).toEqual({ a: 1 });
   });
 });
+
+describe('inbound forwarding', () => {
+  it('forwards inbound frames to window.postMessage', () => {
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+    const frame = { type: 'response', id: '1', data: { ok: 1 } };
+
+    ws.message(JSON.stringify(frame));
+
+    expect(window.postMessage).toHaveBeenCalledWith(frame, '*');
+  });
+
+  it('ignores malformed JSON frames (warn, no throw, no forward)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+
+    expect(() => ws.message('not json {')).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+    expect(window.postMessage).not.toHaveBeenCalled();
+  });
+});

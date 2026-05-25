@@ -37,6 +37,16 @@ export function installShim(): void {
       attempt = 0;
       while (outbox.length) ws!.send(outbox.shift()!);
     });
+    ws.addEventListener('message', (ev) => {
+      let frame: unknown;
+      try {
+        frame = JSON.parse(ev.data);
+      } catch (e) {
+        console.warn('[coach] bad frame', e);
+        return;
+      }
+      window.postMessage(frame, '*'); // always forward; page handles data.error
+    });
     ws.addEventListener('error', (e) => console.warn('[coach] ws error', e));
   }
 
