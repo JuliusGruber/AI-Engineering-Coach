@@ -7,9 +7,9 @@ skipped until the plan is written.
 
 - [x] grilled — 06-state.plan.md
 - [x] grilled — 02-dispatcher.plan.md
-- [x] grilled — 04-webview-shim.plan.md
+- [x] grilled — 04-webview-shim.plan.md (amended during 08-testing grill: added Task 5 hash→page navigation bridge; consider a re-grill)
 - [x] grilled — 03-standalone-html.plan.md
 - [x] grilled — 01-server.plan.md
 - [x] grilled — 05-cli.plan.md
 - [x] grilled — 07-build.plan.md
-- [ ] 08-testing
+- [x] grilled — 08-testing.plan.md

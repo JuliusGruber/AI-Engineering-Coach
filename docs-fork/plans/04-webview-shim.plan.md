@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `src/standalone/webview-shim.ts`, a browser-side polyfill that defines `globalThis.acquireVsCodeApi` (so the unmodified webview bundle runs in a plain browser) and bridges its `postMessage` traffic to the server's `/rpc` WebSocket, reading its auth token from a `<meta name="coach-token">` tag and surfacing a roadmap banner for the curated `BANNER_WORTHY` disabled methods.
+**Goal:** Build `src/standalone/webview-shim.ts`, a browser-side polyfill that defines `globalThis.acquireVsCodeApi` (so the unmodified webview bundle runs in a plain browser) and bridges its `postMessage` traffic to the server's `/rpc` WebSocket, reading its auth token from a `<meta name="coach-token">` tag, surfacing a roadmap banner for the curated `BANNER_WORTHY` disabled methods, and providing a **hash → page navigation bridge** so deep-link URLs (`…/?t=…#skills`) select the right page in a plain browser (the reused upstream `app.ts` has no hash router).
 
-**Architecture:** One leaf module exporting `installShim()` and `BANNER_WORTHY`. `installShim()` reads + validates the token, synchronously defines `acquireVsCodeApi` (whose `postMessage` buffers into a 100-entry FIFO until the socket opens, `getState`/`setState` mirror `localStorage['coach-state']`), then opens the WebSocket. Inbound frames are JSON-parsed and forwarded verbatim to `window.postMessage`; before forwarding, a `standalone-v1-disabled` frame whose `method ∈ BANNER_WORTHY` injects an idempotent sticky DOM banner. A `close` handler reconnects with exponential backoff (250 ms × 2^attempt, capped 30 s) and fires `coach:disconnected` after 5 consecutive failures. A bottom-of-file `if (typeof process === 'undefined') installShim()` self-executes only in the browser bundle, leaving the module inert when imported by the (Node-hosted) vitest suite so tests can drive `installShim()` deterministically.
+**Architecture:** One leaf module exporting `installShim()` and `BANNER_WORTHY`. `installShim()` reads + validates the token, synchronously defines `acquireVsCodeApi` (whose `postMessage` buffers into a 100-entry FIFO until the socket opens, `getState`/`setState` mirror `localStorage['coach-state']`), registers a `hashchange` listener for the navigation bridge, then opens the WebSocket. Inbound frames are JSON-parsed and forwarded verbatim to `window.postMessage`; before forwarding, a `standalone-v1-disabled` frame whose `method ∈ BANNER_WORTHY` injects an idempotent sticky DOM banner, and on the `dataReady` frame the shim re-applies the URL hash (deferred one task so it wins over `onDataReady`'s default `navigateTo('dashboard')`). The hash bridge (`navFromHash`) synthesizes a hidden `[data-page]` element and clicks it, reusing app.ts's document-delegated click handler (`app.ts:451-461`) — which reaches **every** route, including the deep-link-only `rule-editor`/`rule-playground`/`data-explorer` (no nav link) and `burndown` (link FF-removed → normalizes to `dashboard`). A `close` handler reconnects with exponential backoff (250 ms × 2^attempt, capped 30 s) and fires `coach:disconnected` after 5 consecutive failures. A bottom-of-file `if (typeof process === 'undefined') installShim()` self-executes only in the browser bundle, leaving the module inert when imported by the (Node-hosted) vitest suite so tests can drive `installShim()` deterministically.
 
 **Tech Stack:** TypeScript (strict, ES2022 modules, `moduleResolution: bundler`, DOM lib), vitest with the **jsdom** environment (already a devDependency: `jsdom@29.1.1`), driven via a per-file `@vitest-environment jsdom` docblock. No new runtime or dev dependencies. No `vscode` import — this is pure browser code, so the standalone `vscode-stub`/vitest-alias scaffolding from `02-dispatcher` is irrelevant here.
 
@@ -75,6 +75,21 @@ The contracts this plan locks in for `01-server` to honor:
 Keep these strings (`/rpc`, `?t=`, `coach-token`, `coach-state`,
 `coach:disconnected`, `coach-roadmap-banner`) identical in later plans.
 
+The contract this plan locks in for `08-testing` (Playwright smoke layer):
+- The shim provides **hash → page navigation**. Loading `…/?t=<token>#<id>` selects
+  page `<id>` once data is ready, and changing `location.hash` in-session navigates
+  too. `<id>` is any value app.ts's click handler accepts via a `[data-page]`
+  attribute — the 10 nav page ids, the deep-link-only routes
+  (`rule-editor`/`rule-playground`/`data-explorer`), and `burndown` (which
+  `normalizePageForFeatureFlags` maps to `dashboard` while
+  `FF_TOKEN_REPORTING_ENABLED` is false, `app.ts:26-28`).
+- Because navigation reuses app.ts's `navigateTo` (via the synthesized click), the
+  active nav link reflects the current page: `navigateTo` toggles `active` on
+  `.nav-links a[data-page="<id>"]` (`app.ts:466`). `08-testing`'s smoke asserts this
+  class to confirm a page actually rendered (not a silent fall-back to dashboard).
+  This is the navigation mechanism `08-testing` Task 8 depends on; it must exist
+  here for that plan to be executable.
+
 ### One deviation from the spec's code sketch (deliberate, solves a real test problem)
 
 The spec sketch ends with a bare `installShim();` (line 221). Imported by the
@@ -99,8 +114,8 @@ layer in `08-testing`.)
 
 | Path | Responsibility | Created/edited by |
 |------|----------------|-------------------|
-| `src/standalone/webview-shim.ts` | The shim: `BANNER_WORTHY` set, `installShim()` (token read/validate, `acquireVsCodeApi` factory with outbound FIFO + `localStorage` state, WebSocket connect/open-drain), inbound forwarding, reconnect/backoff, roadmap banner, guarded self-exec. | Task 1 (grown through Task 4) |
-| `src/standalone/__tests__/webview-shim.test.ts` | jsdom unit tests + a manual `WebSocket` mock on `globalThis`. | Task 1 (grown through Task 4) |
+| `src/standalone/webview-shim.ts` | The shim: `BANNER_WORTHY` set, `installShim()` (token read/validate, `acquireVsCodeApi` factory with outbound FIFO + `localStorage` state, WebSocket connect/open-drain), inbound forwarding, reconnect/backoff, roadmap banner, hash → page navigation bridge, guarded self-exec. | Task 1 (grown through Task 5) |
+| `src/standalone/__tests__/webview-shim.test.ts` | jsdom unit tests + a manual `WebSocket` mock on `globalThis`. | Task 1 (grown through Task 5) |
 
 No other files are created or modified. `src/standalone/` already exists from the
 earlier plans (or is created implicitly by the first new file path). The test path
@@ -829,7 +844,179 @@ git commit -m "feat(standalone): inject idempotent roadmap banner for disabled v
 
 ---
 
-## Task 5: Full-suite run, type-check, and additive-only verification
+## Task 5: Hash → page navigation bridge
+
+The standalone is opened by URL, and `08-testing`'s Playwright smoke navigates
+per-page via the URL hash (`…/?t=<token>#skills`). But the reused upstream
+`app.ts` has **no** hash router: it navigates only through the document-delegated
+click handler on `[data-page]` links (`app.ts:451-461`), defaults `currentPage` to
+`'dashboard'` (`app.ts:38`), and re-applies that default on every `onDataReady`
+(`app.ts:444`). Under additive-only discipline `app.ts` cannot be edited, so the
+shim supplies the bridge: `navFromHash()` synthesizes a hidden `[data-page]`
+element and clicks it, reusing app.ts's delegation — which reaches **every** route,
+including the deep-link-only `rule-editor`/`rule-playground`/`data-explorer` (no nav
+link) and `burndown` (link FF-removed → `normalizePageForFeatureFlags` maps it to
+`dashboard`). This makes global acceptance #4 ("deep-link-only routes reachable by
+hash URL") literally true and is the navigation `08-testing` Task 8 depends on.
+
+Two triggers: (a) a `window` `hashchange` listener for in-session navigation, and
+(b) the initial hash, applied off the inbound `dataReady` frame the shim already
+inspects — deferred via `setTimeout(navFromHash, 0)` so it runs **after**
+`onDataReady`'s own `navigateTo('dashboard')`. The `dataReady` frame is delivered to
+the page via `window.postMessage`, and a `setTimeout(0)` task always runs *after* a
+same-window posted-message task in every major browser (the classic
+`postMessage`-beats-`setTimeout` ordering), so the deep-link wins over the default
+without a magic delay.
+
+**Files:**
+- Modify: `src/standalone/webview-shim.ts`
+- Modify: `src/standalone/__tests__/webview-shim.test.ts`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `src/standalone/__tests__/webview-shim.test.ts`. These capture the
+synthesized navigation click on `document` (jsdom has no app.ts handler, so the test
+registers its own capture to observe the `[data-page]` the bridge clicks):
+
+```ts
+describe('hash navigation bridge', () => {
+  // Capture the data-page of any synthesized nav click (jsdom has no app.ts handler).
+  function captureNav(): { page: () => string | undefined; stop: () => void } {
+    let page: string | undefined;
+    const onClick = (e: Event): void => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-page]');
+      if (el) page = el.dataset.page;
+    };
+    document.addEventListener('click', onClick);
+    return { page: () => page, stop: () => document.removeEventListener('click', onClick) };
+  }
+
+  it('hashchange synthesizes a [data-page] click for the hash id', () => {
+    installWithToken();
+    const nav = captureNav();
+    window.location.hash = '#timeline';
+    window.dispatchEvent(new Event('hashchange')); // drive deterministically
+    expect(nav.page()).toBe('timeline');
+    // the synthesized element is removed after the click (no DOM leak)
+    expect(document.querySelector('body > a[data-page]')).toBeNull();
+    nav.stop();
+  });
+
+  it('applies the URL hash once a dataReady frame arrives (after onDataReady)', () => {
+    vi.useFakeTimers();
+    window.location.hash = '#skills'; // set BEFORE install so no stray hashchange fires
+    installWithToken();
+    const nav = captureNav();
+    const ws = MockWebSocket.instances[0];
+
+    ws.message(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
+    expect(nav.page()).toBeUndefined(); // deferred — not applied synchronously
+    vi.advanceTimersByTime(1); // fire setTimeout(navFromHash, 0)
+    expect(nav.page()).toBe('skills');
+    nav.stop();
+  });
+
+  it('does not navigate on dataReady when there is no hash', () => {
+    vi.useFakeTimers();
+    window.location.hash = '';
+    installWithToken();
+    const nav = captureNav();
+    MockWebSocket.instances[0].message(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
+    vi.advanceTimersByTime(1);
+    expect(nav.page()).toBeUndefined();
+    nav.stop();
+  });
+});
+```
+
+Add a `window.location.hash = '';` reset to the top-level `beforeEach` (just below
+`localStorage.clear();`) so a hash set by one test never leaks into the next:
+
+```ts
+  localStorage.clear();
+  window.location.hash = '';
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/standalone/__tests__/webview-shim.test.ts`
+Expected: FAIL — there is no `hashchange` listener and no `dataReady` hook yet, so
+no synthesized click fires (`nav.page()` stays `undefined`). The 17 earlier tests
+still pass.
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `src/standalone/webview-shim.ts`:
+
+(a) Add `navFromHash` immediately above `showRoadmapBanner` (inside `installShim`):
+
+```ts
+  // app.ts has no hash router — it navigates only via the document-delegated click on
+  // [data-page] links (app.ts:451-461) and defaults to 'dashboard'. We cannot edit
+  // app.ts (additive-only), so to honor deep-link URLs (#skills, #rule-editor, …) we
+  // synthesize a [data-page] element and click it, reusing that delegation. This reaches
+  // every route, incl. the deep-link-only ones with no nav link and burndown (→dashboard).
+  function navFromHash(): void {
+    const id = location.hash.slice(1);
+    if (!id) return;
+    const el = document.createElement('a');
+    el.dataset.page = id;
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    el.click();
+    el.remove();
+  }
+```
+
+(b) Register the `hashchange` listener — add it just after the
+`globalThis.acquireVsCodeApi = …` assignment and before the
+`if (/^[0-9a-f]{64}$/.test(token)) connect();` line:
+
+```ts
+  window.addEventListener('hashchange', navFromHash);
+```
+
+(c) Add the `dataReady` hook to the `message` listener inside `connect()`. Replace
+the message-listener body so it re-applies the hash after forwarding the frame (the
+banner check and forwarding are unchanged from Task 4):
+
+```ts
+    ws.addEventListener('message', (ev) => {
+      let frame: unknown;
+      try {
+        frame = JSON.parse(ev.data);
+      } catch (e) {
+        console.warn('[coach] bad frame', e);
+        return;
+      }
+      // Banner decision lives here — the shim is the only place that sees every frame.
+      const f = frame as { type?: string; data?: { code?: string; method?: string } };
+      if (f.data?.code === 'standalone-v1-disabled' && BANNER_WORTHY.has(f.data.method ?? '')) {
+        showRoadmapBanner();
+      }
+      window.postMessage(frame, '*'); // always forward; page handles data.error + onDataReady
+      // app.ts has no hash router and onDataReady (just queued via postMessage above)
+      // resets to 'dashboard'; re-apply the URL hash on the next task so a deep-link wins.
+      // setTimeout(0) runs after the posted-message task in every major browser.
+      if (f.type === 'dataReady' && location.hash) setTimeout(navFromHash, 0);
+    });
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/standalone/__tests__/webview-shim.test.ts`
+Expected: PASS — 20 tests passed (17 + 3).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/standalone/webview-shim.ts src/standalone/__tests__/webview-shim.test.ts
+git commit -m "feat(standalone): add hash->page navigation bridge for deep-link URLs"
+```
+
+---
+
+## Task 6: Full-suite run, type-check, and additive-only verification
 
 Confirms the new module passes the whole project runner, type-checks under strict,
 and respects the fork's additive-only discipline (`00-overview.md` →
@@ -840,7 +1027,7 @@ and respects the fork's additive-only discipline (`00-overview.md` →
 - [ ] **Step 1: Run the full vitest suite**
 
 Run: `npm test`
-Expected: PASS — the whole suite is green, including the 17 new
+Expected: PASS — the whole suite is green, including the 20 new
 `src/standalone/__tests__/webview-shim.test.ts` cases. No pre-existing suite
 regresses (this module is additive and imports nothing from the rest of the app).
 If a pre-existing test now fails, stop and investigate.
@@ -902,6 +1089,12 @@ Every acceptance criterion in `docs-fork/specs/04-webview-shim.md` maps to a tas
 | 5. `close`/`open` cycle resets backoff (short interval to next reconnect) | Task 3 | `resets backoff counter on successful open` |
 | 6. `data.method ∈ BANNER_WORTHY` → banner appended; not in set → no banner; both still forwarded | Task 4 | `banners a BANNER_WORTHY disabled method (and still forwards the frame)`; `does NOT banner a silent-disabled method (but still forwards it)` |
 
+Global acceptance #4 ("deep-link-only routes reachable by hash URL") and the
+navigation `08-testing`'s smoke layer requires are covered by **Task 5**'s hash
+bridge (tests: `hashchange synthesizes a [data-page] click for the hash id`,
+`applies the URL hash once a dataReady frame arrives (after onDataReady)`,
+`does not navigate on dataReady when there is no hash`).
+
 Spec **behaviors** (0–9) coverage: token read + validate (#0, Task 1);
 synchronous polyfill registration (#1, Task 1); WebSocket connect at eval time
 (#2, Task 1); outbound buffer + drain + cap (#3, Task 1); inbound forwarding
@@ -929,10 +1122,12 @@ Spec **test-plan** coverage — all 15 named rows are present:
 `banner close button removes the element` (Task 4),
 `repeated disabled responses do not stack banners` (Task 4).
 
-Two **extra** tests beyond the spec's 15, each pinning a contract:
+Five **extra** tests beyond the spec's 15, each pinning a contract:
 `BANNER_WORTHY contains the curated content-creation methods and excludes proactive ones`
-(Task 1 — drift guard on the exported set, size 10) and the `non-hex token`
-branch (Task 1 — completes acceptance #2's "missing **or** non-hex").
+(Task 1 — drift guard on the exported set, size 10), the `non-hex token`
+branch (Task 1 — completes acceptance #2's "missing **or** non-hex"), and the three
+hash-navigation tests (Task 5 — the bridge `08-testing`'s smoke layer and global
+acceptance #4 depend on).
 
 **Type-consistency check:** `installShim` and `BANNER_WORTHY` are the module's only
 exports, spelled identically in source and tests. The string contracts —
@@ -959,3 +1154,12 @@ function); every run step shows the exact command and expected pass/fail output.
   change — keeping this spec's footprint to two new files and zero shared edits.
 - A `declare global { var acquireVsCodeApi }` block is added (absent from the
   sketch) so `globalThis.acquireVsCodeApi = …` typechecks under strict.
+- A **hash → page navigation bridge** (Task 5) is added beyond the spec's code
+  sketch. It is required because the reused upstream `app.ts` has no hash router
+  (navigation is click-delegated on `[data-page]`, default `dashboard`), yet global
+  acceptance #4 promises deep-link routes are "reachable by hash URL" and
+  `08-testing`'s Playwright smoke navigates per-page via the URL hash. The bridge is
+  pure additive browser code in the shim (no `app.ts` edit), reusing app.ts's own
+  delegation by synthesizing a `[data-page]` click. The browser-only initial-hash
+  path (keyed off the `dataReady` frame) is covered end-to-end by `08-testing`; the
+  jsdom unit tests cover `hashchange` and the deferred `dataReady` hook directly.
