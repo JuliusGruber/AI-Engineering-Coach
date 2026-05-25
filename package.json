@@ -115,8 +115,10 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.60.0",
+    "@types/express": "4.17.25",
     "@types/node": "25.9.1",
     "@types/vscode": "1.118.0",
+    "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "4.1.6",
     "@vscode/vsce": "3.9.1",
     "cspell": "10.0.0",
@@ -139,10 +141,12 @@
   "dependencies": {
     "chart.js": "4.5.1",
     "chartjs-chart-treemap": "3.1.0",
+    "express": "4.22.2",
     "htm": "3.1.1",
     "leo-profanity": "1.9.0",
     "open": "^10.1.0",
     "preact": "10.29.2",
+    "ws": "8.21.0",
     "zod": "4.4.3"
   }
 }
