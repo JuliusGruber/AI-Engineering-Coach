@@ -7,7 +7,7 @@ current branch, then STOP for review. A plan is implemented only after it is
 marked `[x]` grilled in `GRILLING-QUEUE.md`; entries whose plan is not yet grilled
 are blocked, not skipped.
 
-- [ ] 06-state
+- [x] implemented — 06-state.plan.md
 - [ ] 02-dispatcher
 - [ ] 04-webview-shim
 - [ ] 03-standalone-html
