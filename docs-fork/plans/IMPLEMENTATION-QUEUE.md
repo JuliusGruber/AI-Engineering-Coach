@@ -8,7 +8,7 @@ marked `[x]` grilled in `GRILLING-QUEUE.md`; entries whose plan is not yet grill
 are blocked, not skipped.
 
 - [x] implemented — 06-state.plan.md
-- [ ] 02-dispatcher
+- [x] implemented — 02-dispatcher.plan.md
 - [ ] 04-webview-shim
 - [ ] 03-standalone-html
 - [ ] 01-server
