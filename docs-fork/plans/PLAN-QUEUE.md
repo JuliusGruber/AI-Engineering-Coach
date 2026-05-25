@@ -10,5 +10,5 @@ shared contract reference, not a subsystem.
 - [x] ready — 03-standalone-html.plan.md
 - [x] ready — 01-server.plan.md
 - [x] ready — 05-cli.plan.md
-- [ ] 07-build
+- [x] ready — 07-build.plan.md
 - [ ] 08-testing
