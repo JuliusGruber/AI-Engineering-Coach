@@ -1,6 +1,7 @@
 // src/standalone/dispatcher.ts
 import { getRpcHandler } from '../webview/panel-rpc'; // pulls panel-shared -> vscode (aliased to stub)
 import { V1_ALLOWED } from './v1-allowed';
+import { STANDALONE_NATIVE } from './standalone-native';
 import type { Analyzer } from '../core/analyzer';
 import type { ParseResult } from '../core/cache';
 
@@ -27,7 +28,18 @@ export async function dispatch(
   params: unknown,
   ctx: DispatchContext,
 ): Promise<DispatchResult> {
-  // Tier 1 (native table) is prepended in Task 5.
+  // Tier 1: standalone-native methods (openExternal). These bypass the registry
+  // and do not need ctx.analyzer.
+  const native = STANDALONE_NATIVE[method];
+  if (native) {
+    try {
+      return await native(params);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[coach] native handler-error in ${method}:`, err);
+      return { ok: false, error: { code: 'handler-error', method, message } };
+    }
+  }
 
   // Tier 2: allowlist gate. Expected path (webview may hit a disabled method
   // proactively); no log line.

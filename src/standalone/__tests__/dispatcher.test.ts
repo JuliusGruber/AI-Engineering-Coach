@@ -4,6 +4,9 @@ import type { RpcHandler } from '../../webview/panel-rpc';
 import { dispatch, type DispatchContext } from '../dispatcher';
 import type { Analyzer } from '../../core/analyzer';
 import type { ParseResult } from '../../core/cache';
+import open from 'open';
+vi.mock('open', () => ({ default: vi.fn() }));
+const mockedOpen = vi.mocked(open);
 
 // Load the REAL panel-rpc (resolving the transitive `vscode` via the stub alias),
 // but wrap getRpcHandler so each test can inject a fake handler / undefined.
@@ -27,6 +30,7 @@ const fakeHandler = (fn: (...args: unknown[]) => unknown): RpcHandler =>
 afterEach(() => {
   vi.restoreAllMocks();        // restores console spies
   mockedGetRpcHandler.mockReset();
+  mockedOpen.mockReset();
 });
 
 describe('dispatch — allowlist gate', () => {
@@ -99,5 +103,16 @@ describe('dispatch — registry tier', () => {
       error: { code: 'unknown-method', method: 'getStats' },
     });
     expect(errSpy).toHaveBeenCalled();
+  });
+});
+
+describe('dispatch — native tier', () => {
+  it('runs a native method before the allowlist, with no analyzer', async () => {
+    // openExternal is NOT in V1_ALLOWED; it must resolve via STANDALONE_NATIVE
+    // ahead of the gate, and must not require ctx.analyzer/parseResult.
+    const res = await dispatch('openExternal', { url: 'https://example.com' }, {});
+    expect(res).toEqual({ ok: true, data: { ok: true } });
+    expect(mockedOpen).toHaveBeenCalledTimes(1);
+    expect(mockedGetRpcHandler).not.toHaveBeenCalled();
   });
 });
