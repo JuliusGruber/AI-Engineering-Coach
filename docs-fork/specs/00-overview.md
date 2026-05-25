@@ -16,30 +16,36 @@ Specs depend on each other only through their public APIs. Implement in
 topological order:
 
 ```
-06-state ──┐
-           ├─► 02-dispatcher ──► 01-server ──┐
-           │                                  ├─► 03-standalone-html ──┐
-04-shim ───┘                                  │                         │
-                                              └─► 05-cli ───────────────┴─► 07-build ──► 08-testing
+06-state ───────────┐
+02-dispatcher ──────┤
+04-webview-shim ────┼─► 01-server ──► 05-cli ──► 07-build ──► 08-testing
+03-standalone-html ─┘                  ▲
+                                       └── 06-state (also consumed by the CLI on boot)
 ```
+
+(06-state → 01-server + 05-cli. 02-dispatcher, 04-webview-shim, and
+03-standalone-html → 01-server. 02-dispatcher no longer depends on 06-state —
+the model-budget handlers that used it are deferred to v2.)
 
 | Order | Spec                  | Production LOC | Blocks       |
 |-------|-----------------------|----------------|--------------|
-| 1     | 06-state              | ~50            | 01, 05       |
-| 2     | 02-dispatcher         | ~75            | 01           |
-| 3     | 04-webview-shim       | ~50            | 03           |
-| 4     | 01-server             | ~205           | 03, 05       |
-| 5     | 03-standalone-html    | ~120           | 05           |
+| 1     | 06-state              | ~35            | 01, 05       |
+| 2     | 02-dispatcher         | ~70            | 01           |
+| 3     | 04-webview-shim       | ~50            | 01           |
+| 4     | 03-standalone-html    | ~70            | 01           |
+| 5     | 01-server             | ~205           | 05           |
 | 6     | 05-cli                | ~185           | 07           |
 | 7     | 07-build              | ~5 (config)    | 08           |
 | 8     | 08-testing            | ~30 (config)   | —            |
-| **Total** |                   | **~720**       |              |
+| **Total** |                   | **~650**       |              |
 
 "Production LOC" excludes per-spec unit/integration/smoke tests, which
-add roughly another ~1000 LOC across all eight specs. The feasibility
+add roughly another ~950 LOC across all eight specs. The feasibility
 doc estimated ~370 production LOC; the spec-set total is higher
-because it teases out auth, image-route, flag-parser, parse-bootstrap,
-and nav-config as separate small modules to keep each file focused.
+because it teases out auth, image-route, flag-parser, and parse-bootstrap
+as separate small modules to keep each file focused. (03-standalone-html
+shrank — it now reuses upstream `getDashboardHtml` instead of duplicating a
+nav; there is no `nav-config.ts`.)
 
 ## RPC contract
 
@@ -127,23 +133,40 @@ try/catch swallows the error, but excluding it avoids noisy logs.
 
 ## Standalone-native methods (not in the registry)
 
-`V1_ALLOWED` gates only the upstream `getRpcHandler` registry. Three RPC
-method names the webview calls are **not** in that registry — upstream
-they were special-cased by the dropped host (`panel.ts:269,279`), so the
-fork must reimplement them as **native handlers** checked *before* the
+`V1_ALLOWED` gates only the upstream `getRpcHandler` registry. Upstream, the
+dropped host special-cased three non-registry methods (`panel.ts:269,279`).
+In v1 the fork reimplements **one** as a native handler checked *before* the
 allowlist gate (see [02-dispatcher](02-dispatcher.md#three-tier-dispatch)):
 
-| Method             | Caller (visible page)   | Native behavior                                                        |
-|--------------------|-------------------------|------------------------------------------------------------------------|
-| `openExternal`     | `page-peers.ts:336`     | `open` package, **after** `new URL()` validates `http:`/`https:` only. |
-| `loadModelBudgets` | `page-burndown.ts`      | Return `readUserState().modelBudgets` **unwrapped** (default `{}`).     |
-| `saveModelBudgets` | `page-burndown.ts:95`   | `writeUserState({ …, modelBudgets })`; return `{ ok: true }`.          |
+| Method         | Caller (visible page) | Native behavior                                                        |
+|----------------|-----------------------|------------------------------------------------------------------------|
+| `openExternal` | `page-peers.ts:336`   | `open` package, **after** `new URL()` validates `http:`/`https:` only. |
 
-These are not secret-gated differently from registry methods — they ride
-the same WS connection and token. They simply route to fork code instead
-of `getRpcHandler`. Every *other* non-registry method the webview can
-emit (the 16 `PanelRequestService` LLM/SDLC methods) is left to the
-disabled path.
+The model-budget pair (`loadModelBudgets`/`saveModelBudgets`,
+`panel.ts:279`) is **deferred to v2**: its only caller is `page-burndown.ts`,
+which is unreachable while `FF_TOKEN_REPORTING_ENABLED` is `false` (see the
+flag note below). Every other non-registry method the webview can emit (the
+16 `PanelRequestService` LLM/SDLC methods, plus the rule-authoring methods)
+is left to the disabled path.
+
+## Feature flag: token reporting (`FF_TOKEN_REPORTING_ENABLED`)
+
+`src/core/constants.ts:127` sets `FF_TOKEN_REPORTING_ENABLED = false`
+upstream. The fork **must not** flip it (additive-only; `constants.ts` is
+upstream). Consequences the implementing agent must respect:
+
+- The `burndown` nav entry is gated server-side (`panel-html.ts:34`) and any
+  navigation to it is redirected to `dashboard` (`app.ts:27`); it never
+  renders in v1.
+- The five token methods in `V1_ALLOWED` (`getConsumption`, `getBurndown`,
+  `getAiCredits`, `getAiCreditBurndown`, `getTokenCoverage`) return an
+  `errorResult` behind the flag. They stay in the allowlist (harmless,
+  read-only no-ops) but back no visible page in v1.
+- Model-budget persistence (the two native budget handlers above and the
+  `UserState` half of [06-state](06-state.md)) is deferred to v2 because its
+  only caller is the unreachable burndown page.
+
+Re-enable all of the above in v2 when the flag flips.
 
 ## Disabled-method UX: banner vs. silent
 
@@ -195,8 +218,10 @@ for spec self-containment):
 | `~/.copilot-analytics-cache/meta.json`     | shared (core)     |
 | `~/.ai-engineer-coach/rules/`              | shared (core, RO) |
 | `~/.ai-engineer-coach/metrics/`            | shared (core, RO) |
-| `~/.ai-engineer-coach/state.json`          | standalone        |
 | `~/.ai-engineer-coach/server-state.json`   | standalone        |
+
+(No `state.json` in v1 — the `UserState`/model-budget file is deferred to
+v2 with the burndown page; see the feature-flag note above.)
 
 Rules:
 
@@ -204,8 +229,10 @@ Rules:
   Both processes may run concurrently. No lock files in v1; rely on the
   cache's existing self-healing invalidation path. Add locking in v1.1
   only if real-world corruption is observed.
-- Standalone preferences (model budgets, last-used filter) live in
-  `state.json`. They do **not** sync with VS Code `context.globalState`.
+- The only standalone-owned file in v1 is `server-state.json` (single-
+  instance handshake). Client-side preferences (e.g. last filter) live in
+  the browser's `localStorage` via the shim's `getState`/`setState`
+  ([04-webview-shim](04-webview-shim.md)), not on the server.
 
 See [06-state](06-state.md) for full schemas and atomic-write rules.
 
@@ -235,16 +262,18 @@ contract. Two files are shared and may be **additively** edited:
 `bin/coach` and `src/standalone/vscode-stub.ts` are new files (allowed).
 `docs-fork/` is fork-only.
 
-**Why the `vscode` alias is required (not optional).** Importing
-`getRpcHandler` from `panel-rpc.ts` transitively loads `panel-shared.ts`,
-which has a **top-level** `import * as vscode from 'vscode'`
-(`panel-shared.ts:7`) — used only in `postResponse`/`postError`, which
-the standalone never calls, but the import statement runs regardless.
-A production esbuild bundle *might* tree-shake the unused namespace away;
-vitest (which transforms, not bundles) will not. The stub alias makes the
-import resolve to a harmless object everywhere, independent of
-tree-shaking, and future-proofs against any reused webview file touching
-`vscode`. See [02-dispatcher](02-dispatcher.md#transitive-vscode-import).
+**Why the `vscode` alias is required (not optional).** Two reused upstream
+modules pull a **top-level** `import * as vscode` that runs the moment the
+standalone loads them: `panel-shared.ts:7` (via `getRpcHandler` →
+`errorResult`, used only in `postResponse`/`postError`, which the standalone
+never calls) and `core/rule-compiler.ts` (via `panel-rpc.ts:37`). In
+addition, the HTML wrapper reuses `getDashboardHtml`, which **actively
+calls** `vscode.Uri.joinPath` (`panel-html.ts:11`). A production esbuild
+bundle *might* tree-shake unused namespaces; vitest (which transforms, not
+bundles) will not. One **global** stub alias resolves every chain
+deterministically and supplies the `Uri.joinPath` the HTML path needs. See
+[02-dispatcher](02-dispatcher.md#transitive-vscode-import) and
+[03-standalone-html](03-standalone-html.md).
 
 ## V1 acceptance criteria (mirror of feasibility doc)
 
@@ -259,9 +288,12 @@ the relevant module.
    configuration.
 3. Date filter, harness filter, session list, session detail, and every
    visible analytics page render with real data.
-4. Hidden pages (rule-editor, rule-playground, antipatterns-editor,
-   data-explorer, learning) do not appear in nav. Direct URL hits to
-   those pages show a roadmap banner.
+4. The nav shows the upstream entries unchanged (10 entries; `burndown` is
+   gated off by `FF_TOKEN_REPORTING_ENABLED`). Deep-link-only routes
+   (rule-editor, rule-playground, data-explorer) are reachable by hash URL
+   and render their working/degraded views. The roadmap banner appears on
+   user-initiated content-creation methods (e.g. `createSkill` on the skills
+   page), not on page loads.
 5. Playwright smoke test visits every visible page route, asserts zero
    console errors.
 6. Security: `127.0.0.1:7331` bind, token gate, single-instance reuse
@@ -305,5 +337,5 @@ the relevant module.
 | Shim delivery                         | External `/standalone-shim.js` + `<meta name="coach-token">` | `script-src 'self'` forbids an inline polyfill; cookie is `HttpOnly` so JS reads the WS token from the meta tag |
 | Parse lifecycle                       | Serve-then-parse; `dataReady` mandatory (not deferrable)  | The webview gates *all* rendering on `dataReady` (`app.ts:444`); `progress` forwarding is the only deferrable piece |
 | `vscode` import safety                | Alias `vscode` → `vscode-stub.ts` (standalone build + tests) | `panel-rpc` transitively pulls a top-level `import * as vscode` via `panel-shared.ts:7` |
-| Non-registry methods                  | Front-of-line `STANDALONE_NATIVE` table before the allowlist | `openExternal` + model budgets are called by visible pages but aren't in `getRpcHandler` |
+| Non-registry methods                  | Front-of-line `STANDALONE_NATIVE` table before the allowlist (`openExternal` only in v1) | `openExternal` (`page-peers.ts:336`) isn't in `getRpcHandler`; the model-budget pair is deferred to v2 with the flag-gated burndown page |
 | Disabled-method banner                | Curated `BANNER_WORTHY` set in the shim; rest silent       | The dashboard fires disabled methods on load; a global banner would pop on the home screen |

@@ -117,21 +117,28 @@ the correct failure mode for a missing token).
      'createSkill', 'generateSkillContent', 'generateLearningQuiz',
      'generateLearningResources', 'generateCodeComparison',
      'generateDidYouKnow', 'installSkill', 'installCatalogItem',
-     'triageCatalog',                 // user-clicked on skills page; silent on dashboard would need page-awareness we don't have, so banner is acceptable here
-     'getRuleEditor',                 // deep-linked hidden authoring pages
+     'triageCatalog',                 // user-clicked on the visible skills page; silent on the dashboard would need page-awareness we don't have, so banner is acceptable here
+     'getRuleEditor',                 // fired by a button on the (working) anti-patterns/rule-editor view
    ]);
    ```
 
+   The real banner trigger is **user-initiated content creation on visible
+   pages** — chiefly `createSkill`/`installSkill`/`installCatalogItem` on the
+   Skill Finder page, and the `generate*` learning methods. The
+   "hidden authoring pages" framing from the feasibility doc does not apply:
+   the deep-link-only routes (`rule-editor`, `rule-playground`,
+   `data-explorer`) actually render working/partly-working pages
+   (see [08-testing](08-testing.md) Layer 0).
+
    Everything else disabled (`triageSkills`, `discoverCatalog`,
-   `reviewContextFiles`, `getSdlc*`, `getWorkspaceDeps`) is
-   **silent-disabled**: the frame still forwards (so the page's
+   `reviewContextFiles`, `getSdlc*`, `getWorkspaceDeps`, and the unlisted
+   rule-authoring methods like `reviewLocalRules`/`evaluateExpression`) is
+   **silent-disabled** by default: the frame still forwards (so the page's
    `.catch(() => null)` degrades the section), but no banner appears.
 
-   **In all cases the frame is still forwarded** to
-   `window.postMessage`, so the webview's `shared.ts:62` rejects on
-   `data.error` and the page's error boundary handles it. Consequence to
-   accept: a deep-link to a hidden authoring page shows *both* the banner
-   and the page's error-boundary fallback — fine for an edge-case route.
+   **In all cases the frame is still forwarded** to `window.postMessage`,
+   so the webview's `shared.ts:62` rejects on `data.error` and the page's
+   error boundary handles it.
 
 ## Decisions
 

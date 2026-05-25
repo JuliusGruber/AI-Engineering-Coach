@@ -35,7 +35,7 @@ on lifecycle and routing.
 // src/standalone/server.ts
 
 import type { Analyzer } from '../core/analyzer';
-import type { ParseResult } from '../core/types';
+import type { ParseResult } from '../core/cache';
 
 export interface ServerOptions {
   port?: number;          // default 7331
@@ -44,8 +44,8 @@ export interface ServerOptions {
   // Optional at construction: the server boots BEFORE the parse finishes
   // (serve-then-parse — see Boot sequence). The CLI calls
   // `handle.setData(...)` once the Analyzer is ready. Until then, registry
-  // RPCs get a transient `handler-error` ("data not ready"); native
-  // methods (model budgets, openExternal) work immediately.
+  // RPCs get a transient `handler-error` ("data not ready"); the native
+  // method (`openExternal`) works immediately.
   analyzer?: Analyzer;
   parseResult?: ParseResult;
 }
@@ -105,8 +105,8 @@ export async function probeExistingInstance(port: number): Promise<string | null
    ([05-cli](05-cli.md)) drives the parse and calls `handle.setData(...)`
    when the `Analyzer` is built, at which point the server broadcasts
    `dataReady`. Registry RPCs that arrive before `setData` return a
-   transient `handler-error` ("data not ready"); native methods (model
-   budgets, `openExternal`) do not need the analyzer and work
+   transient `handler-error` ("data not ready"); the native method
+   (`openExternal`) does not need the analyzer and works
    immediately. In practice the webview does not issue registry RPCs
    until it receives `dataReady`, so the not-ready path is defensive.
 
@@ -234,7 +234,7 @@ anyway.
 - Node built-ins: `http`, `crypto`, `path`, `fs`
 - Fork: [02-dispatcher](02-dispatcher.md), [03-standalone-html](03-standalone-html.md),
   [04-webview-shim](04-webview-shim.md), [06-state](06-state.md)
-- Upstream: `src/core/analyzer`, `src/core/types`, the parse worker
+- Upstream: `src/core/analyzer`, `src/core/cache` (`ParseResult`), the parse worker
   pool (spawned by the caller in [05-cli](05-cli.md); the resulting
   `Analyzer`/`ParseResult` are handed to the server via
   `handle.setData(...)` after the parse completes, not at construction)

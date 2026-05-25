@@ -117,12 +117,13 @@ await build({
     'fsevents',
   ],
   alias: {
-    // REQUIRED — not optional. Importing getRpcHandler from panel-rpc
-    // transitively loads panel-shared.ts, which has a top-level
-    // `import * as vscode from 'vscode'` (panel-shared.ts:7). This alias
-    // resolves it to a harmless stub so the bundle never tries to require
-    // a real 'vscode' at runtime. Scope: this standalone build ONLY — the
-    // extension build above must keep the real external 'vscode'.
+    // REQUIRED — not optional. The standalone bundle pulls top-level
+    // `import * as vscode` through TWO chains: getRpcHandler -> panel-shared.ts:7,
+    // and panel-rpc.ts:37 -> core/rule-compiler.ts. The HTML wrapper also reuses
+    // getDashboardHtml, which calls vscode.Uri.joinPath. One global alias to the
+    // stub covers all of it, so the bundle never requires a real 'vscode' at
+    // runtime. Scope: this standalone build ONLY — the extension build above must
+    // keep the real external 'vscode'.
     vscode: './src/standalone/vscode-stub.ts',
   },
   banner: {
@@ -146,15 +147,29 @@ await build({
 });
 ```
 
-`vscode-stub.ts` is a new fork file:
+`vscode-stub.ts` is a new fork file. It is **not** an empty module: the
+HTML wrapper ([03-standalone-html](03-standalone-html.md)) reuses upstream
+`getDashboardHtml`, which calls `vscode.Uri.joinPath(...)` at
+`panel-html.ts:11-12`. That is the one `vscode` member actually invoked on
+the standalone path; everything else (`panel-shared`'s `postResponse`/
+`postError`, `rule-compiler`'s vscode usage) is imported but never called.
+So the stub provides a minimal `Uri.joinPath` and nothing more:
 
 ```ts
 // src/standalone/vscode-stub.ts
-// Resolves the transitive `import * as vscode` from reused webview files
-// (panel-shared.ts:7) to a harmless object in the standalone build/tests.
-// Nothing in the standalone code path actually calls into it.
-export {};               // empty module; namespace import yields {}
-export default {};
+// Resolves the transitive `import * as vscode` pulled in by reused webview
+// files — panel-shared.ts:7 and core/rule-compiler.ts (via panel-rpc.ts:37) —
+// AND satisfies the one live call on the standalone path:
+// getDashboardHtml -> vscode.Uri.joinPath (panel-html.ts:11).
+export const Uri = {
+  // The standalone's stub Webview (03-standalone-html) maps the result to
+  // `/dist/webview/<file>`, so only the trailing path segment is load-bearing.
+  joinPath: (_base: unknown, ...parts: string[]) => ({
+    path: parts.join('/'),
+    fsPath: parts.join('/'),
+  }),
+};
+export default { Uri };
 ```
 
 Notes for the implementing agent:

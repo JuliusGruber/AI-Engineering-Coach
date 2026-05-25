@@ -16,10 +16,10 @@ envelope."
 | Path                                            | Purpose                       | LOC |
 |-------------------------------------------------|-------------------------------|-----|
 | `src/standalone/v1-allowed.ts`                  | Source-of-truth allowlist     | ~45 (data) |
-| `src/standalone/standalone-native.ts`           | `STANDALONE_NATIVE` handlers  | ~50 |
+| `src/standalone/standalone-native.ts`           | `STANDALONE_NATIVE` handler (`openExternal`) | ~25 |
 | `src/standalone/dispatcher.ts`                  | dispatch() function           | ~45 |
-| `src/standalone/__tests__/dispatcher.test.ts`   | Unit tests                    | ~90 |
-| `src/standalone/__tests__/standalone-native.test.ts` | Native handler tests     | ~70 |
+| `src/standalone/__tests__/dispatcher.test.ts`   | Unit tests                    | ~80 |
+| `src/standalone/__tests__/standalone-native.test.ts` | Native handler tests     | ~30 |
 
 ## Public API
 
@@ -27,7 +27,7 @@ envelope."
 // src/standalone/dispatcher.ts
 
 import type { Analyzer } from '../core/analyzer';
-import type { ParseResult } from '../core/types';
+import type { ParseResult } from '../core/cache';
 
 export interface DispatchContext {
   // Optional: the server serves before the parse finishes
@@ -84,21 +84,27 @@ checks them in this order:
    stack to stderr and return
    `{ ok: false, error: { code: 'handler-error', method, message: err.message } }`.
    Never let an exception escape into the WS connection.
-7. **Mutation paths.** All 40 *allowlisted* methods are read-only. The
-   *native* `saveModelBudgets` writes `state.json` (via [06-state](06-state.md),
-   which owns atomic-write + recovery), so the only write-side error
-   handling lives in that native handler, not the registry path.
+7. **Mutation paths.** All 40 *allowlisted* methods are read-only, and the
+   sole native handler (`openExternal`) shells out via `open` without writing
+   any standalone state. v1 therefore has **no write-side dispatch path**
+   (the model-budget writer is deferred to v2 — see below).
 
 ## Standalone-native handlers (`STANDALONE_NATIVE`)
 
-Three methods the webview calls are not in the `getRpcHandler` registry —
-upstream they were special-cased by `panel.ts` (`:269`, `:279`). They are
-reimplemented here and checked before the allowlist:
+Upstream, `panel.ts` special-cased three non-registry methods: `openExternal`
+(`:269`) and the model-budget pair `loadModelBudgets`/`saveModelBudgets`
+(`:279`). In v1 only **`openExternal`** is reimplemented. The budget pair is
+**dropped from v1 scope**: its only caller is `page-burndown.ts`, and the
+burndown page is unreachable while `FF_TOKEN_REPORTING_ENABLED` is `false`
+(the nav link is gated server-side at `panel-html.ts:34` and any navigation to
+`burndown` is redirected to `dashboard` at `app.ts:27`). Re-add the budget
+handlers in v2 when the flag flips. If the webview ever emits
+`loadModelBudgets`/`saveModelBudgets` in v1, they fall through to the allowlist
+gate → `standalone-v1-disabled` (silent; not banner-worthy), which is harmless.
 
 ```ts
 // src/standalone/standalone-native.ts
 import open from 'open';
-import { readUserState, writeUserState } from './state';
 
 export const STANDALONE_NATIVE: Record<string, NativeHandler> = {
   // page-peers.ts:336 — open a web link in the user's browser.
@@ -118,44 +124,33 @@ export const STANDALONE_NATIVE: Record<string, NativeHandler> = {
     await open(parsed.href, { url: true });   // {url:true} → never treated as a filesystem path
     return { ok: true, data: { ok: true } };
   },
-
-  // page-burndown.ts — return the budgets object UNWRAPPED (matches panel.ts:339).
-  loadModelBudgets: async () => ({ ok: true, data: readUserState().modelBudgets }),
-
-  // page-burndown.ts:95 — persist budgets; return { ok: true } (matches panel.ts:334).
-  saveModelBudgets: async (params) => {
-    const budgets = (params as { budgets?: Record<string, number> } | undefined)?.budgets ?? {};
-    try {
-      const state = readUserState();
-      writeUserState({ ...state, modelBudgets: budgets });
-      return { ok: true, data: { ok: true } };
-    } catch (err) {
-      return { ok: false, error: { code: 'handler-error', method: 'saveModelBudgets', message: 'Failed to save budgets' } };
-    }
-  },
 };
 ```
 
 `STANDALONE_NATIVE` lives in its own file so the dispatcher stays short
-and the native handlers are unit-testable in isolation.
+and the native handler is unit-testable in isolation.
 
 ## Transitive vscode import (alias required)
 
 `import { getRpcHandler } from '../webview/panel-rpc'` is **not**
 vscode-free at module level, despite `panel-rpc.ts` itself using only
-lazy `require('vscode')`. Its import of `errorResult` from
-`./panel-shared` (`panel-rpc.ts:39`) pulls in `panel-shared.ts`, which has
-a **top-level** `import * as vscode from 'vscode'` (`panel-shared.ts:7`).
-That import executes the moment the dispatcher module loads.
+lazy `require('vscode')`. There are **two** top-level transitive chains,
+both triggered the moment the dispatcher module loads:
+
+1. `errorResult` from `./panel-shared` (`panel-rpc.ts:39`) → `panel-shared.ts`
+   has a top-level `import * as vscode from 'vscode'` (`panel-shared.ts:7`).
+2. `compileNaturalLanguageRule` from `../core/rule-compiler` (`panel-rpc.ts:37`)
+   → `rule-compiler.ts` also imports `vscode` at module level.
 
 The fix lives in build/test config, not here: `vscode` is aliased to
 `src/standalone/vscode-stub.ts` in both the esbuild standalone entry and
 the vitest config (see [00-overview](00-overview.md#additive-only-fork-discipline),
-[07-build](07-build.md), [08-testing](08-testing.md)). With the alias in
-place, the dispatcher's unit tests can use the **real** `panel-rpc`
-instead of `vi.mock`, which is a stronger test. Do **not** "fix" this by
-avoiding the `errorResult` import — importing `getRpcHandler` alone is
-enough to pull in `panel-shared`.
+[07-build](07-build.md), [08-testing](08-testing.md)). A **single global
+alias covers both chains** (and any future one). With it in place, the
+dispatcher's unit tests can use the **real** `panel-rpc` instead of
+`vi.mock`, which is a stronger test. Do **not** "fix" this by avoiding a
+specific import — importing `getRpcHandler` alone is enough to pull in
+both `panel-shared` and `rule-compiler`.
 
 ## Decisions
 
@@ -175,10 +170,9 @@ enough to pull in `panel-shared`.
 - `src/webview/panel-rpc` (upstream) — for `getRpcHandler` (transitively
   loads `panel-shared` → `vscode`; resolved by the alias stub)
 - `src/core/analyzer` (upstream) — for type only
-- `src/core/types` (upstream) — for `ParseResult` type
+- `src/core/cache` (upstream) — for `ParseResult` type
 - `./v1-allowed` (own)
 - `./standalone-native` (own) — `STANDALONE_NATIVE`
-- `./state` (own, [06-state](06-state.md)) — used by the budget native handlers
 - npm: `open` (^10) — used by the `openExternal` native handler
 
 **Caveat for the implementing agent:** `getRpcHandler` is currently
@@ -195,7 +189,7 @@ import { getRpcHandler } from '../webview/panel-rpc';  // pulls panel-shared →
 import { V1_ALLOWED } from './v1-allowed';
 import { STANDALONE_NATIVE } from './standalone-native';
 import type { Analyzer } from '../core/analyzer';
-import type { ParseResult } from '../core/types';
+import type { ParseResult } from '../core/cache';
 
 export interface DispatchContext {
   analyzer?: Analyzer;
@@ -211,7 +205,7 @@ export async function dispatch(
   params: unknown,
   ctx: DispatchContext,
 ): Promise<DispatchResult> {
-  // Tier 1: standalone-native methods (openExternal, model budgets).
+  // Tier 1: standalone-native methods (openExternal).
   const native = STANDALONE_NATIVE[method];
   if (native) {
     try { return await native(params); }
@@ -266,15 +260,11 @@ export async function dispatch(
    `{ ok: false, error: { code: 'handler-error', ... } }` and the
    process does not crash.
 5. `V1_ALLOWED.size === 40`.
-6. `dispatch('loadModelBudgets', {}, ctx)` returns
-   `{ ok: true, data: {...} }` (the budgets object, default `{}`) **without**
-   needing `ctx.analyzer` — proves native methods work before parse.
-7. `dispatch('saveModelBudgets', { budgets }, ctx)` writes `state.json`
-   and returns `{ ok: true, data: { ok: true } }`.
-8. `dispatch('openExternal', { url: 'file:///etc/passwd' }, ctx)` returns
+6. `dispatch('openExternal', { url: 'file:///etc/passwd' }, ctx)` returns
    a `bad-request` error and does **not** invoke `open`;
-   `{ url: 'https://example.com' }` invokes `open` once.
-9. `dispatch('getStats', {}, { })` with undefined analyzer returns
+   `{ url: 'https://example.com' }` invokes `open` once **without** needing
+   `ctx.analyzer` — proves the native handler runs before the allowlist/parse.
+7. `dispatch('getStats', {}, { })` with undefined analyzer returns
    `handler-error` ("data not ready"), not a crash.
 
 ## Test plan
@@ -286,7 +276,7 @@ needed (forcing a throw, or the `unknown-method` path).
 
 | Test name                                          | Intent                                       |
 |----------------------------------------------------|----------------------------------------------|
-| `native method runs before allowlist`              | `loadModelBudgets` resolves with no analyzer |
+| `native method runs before allowlist`              | `openExternal` (https) resolves with no analyzer |
 | `allows whitelisted method through`                | Happy path (real or mocked handler)          |
 | `blocks non-whitelisted method`                    | Asserts `standalone-v1-disabled` envelope    |
 | `data-not-ready guard for registry method`         | Undefined analyzer → `handler-error`         |
@@ -303,6 +293,3 @@ needed (forcing a throw, or the `unknown-method` path).
 | `openExternal rejects non-http(s) url`             | `file:`/`vscode:` → `bad-request`, `open` not called |
 | `openExternal rejects unparseable url`             | `new URL` throw → `bad-request`              |
 | `openExternal opens http(s) url once`              | Spy on `open`                                |
-| `loadModelBudgets returns {} on first run`         | Unwrapped default                            |
-| `saveModelBudgets round-trips through state.json`  | Reads back via `readUserState`               |
-| `saveModelBudgets returns errorResult on write fail`| Mock `writeUserState` to throw              |
