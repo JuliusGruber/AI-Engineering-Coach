@@ -63,3 +63,19 @@ describe('read/write round-trip', () => {
     expect(fs.existsSync(tmp)).toBe(false);
   });
 });
+
+describe('corruption recovery', () => {
+  it('read recovers from corrupt JSON', () => {
+    const file = path.join(stateDir(), 'server-state.json');
+    fs.writeFileSync(file, 'not valid json {{{');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(readServerState()).toBeNull();
+
+    const broken = fs
+      .readdirSync(stateDir())
+      .filter((f) => f.startsWith('server-state.json.broken-'));
+    expect(broken).toHaveLength(1);
+    expect(warn).toHaveBeenCalled();
+  });
+});

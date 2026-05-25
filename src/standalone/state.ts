@@ -37,5 +37,12 @@ export function readServerState(): ServerState | null {
   const file = serverStateFile();
   if (!fs.existsSync(file)) return null;
   const raw = fs.readFileSync(file, 'utf8');
-  return JSON.parse(raw) as ServerState;
+  try {
+    return JSON.parse(raw) as ServerState;
+  } catch {
+    const broken = `${file}.broken-${Date.now()}`;
+    fs.renameSync(file, broken);
+    console.warn(`[coach] corrupt server-state.json; moved to ${broken}`);
+    return null;
+  }
 }
