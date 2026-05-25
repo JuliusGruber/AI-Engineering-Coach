@@ -166,6 +166,13 @@ function attachRpcServer(server: http.Server, deps: RpcDeps): WebSocketServer {
     socket.on('pong', () => alive.set(socket, true));
     socket.on('close', () => deps.clients.delete(socket));
 
+    // The unmodified webview gates ALL rendering on dataReady (app.ts:444). A socket
+    // that connects after data is present (warm cache, reconnect, second tab) must
+    // receive it unprompted. Re-sending on reconnect is harmless (onDataReady is idempotent).
+    if (deps.isPresent()) {
+      socket.send(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
+    }
+
     socket.on('message', (raw) => {
       void (async () => {
         let msg: unknown;

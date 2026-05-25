@@ -20,8 +20,13 @@ vi.mock('../dispatcher', () => ({ dispatch: vi.fn() }));
 import { createServer, resolveShimPath, resolveWebviewRoot, type ServerHandle } from '../server';
 import { WebSocket as WsClient } from 'ws';
 import { dispatch } from '../dispatcher';
+import type { Analyzer } from '../../core/analyzer';
+import type { ParseResult } from '../../core/cache';
 
 const mockedDispatch = vi.mocked(dispatch);
+
+const fakeAnalyzer = {} as unknown as Analyzer;
+const fakeParseResult = {} as unknown as ParseResult;
 
 class Client {
   ws: WsClient;
@@ -245,5 +250,46 @@ describe('WebSocket protocol', () => {
     expect(res.id).toBe('z');
     expect(data.code).toBe('bad-request');
     client.close();
+  });
+});
+
+describe('dataReady and broadcast', () => {
+  it('sends dataReady on connect when data is already present', async () => {
+    const h = await start();
+    h.setData(fakeAnalyzer, fakeParseResult); // no sockets yet — just flips present
+
+    const client = new Client(wsUrl(h, h.token));
+    await client.opened();
+    const frame = await client.waitFor((f) => f.type === 'dataReady');
+
+    expect(frame).toEqual({ type: 'dataReady', currentWorkspace: '' });
+    client.close();
+  });
+
+  it('broadcasts dataReady to already-open sockets when setData runs', async () => {
+    const h = await start();
+    const client = new Client(wsUrl(h, h.token));
+    await client.opened();
+    // Not present yet → no dataReady on connect.
+
+    h.setData(fakeAnalyzer, fakeParseResult);
+    const frame = await client.waitFor((f) => f.type === 'dataReady');
+
+    expect(frame).toEqual({ type: 'dataReady', currentWorkspace: '' });
+    client.close();
+  });
+
+  it('forwards a broadcast progress frame to every open socket', async () => {
+    const h = await start();
+    const a = new Client(wsUrl(h, h.token));
+    const b = new Client(wsUrl(h, h.token));
+    await Promise.all([a.opened(), b.opened()]);
+
+    h.broadcast({ type: 'progress', pct: 42 });
+
+    expect(await a.waitFor((f) => f.type === 'progress')).toEqual({ type: 'progress', pct: 42 });
+    expect(await b.waitFor((f) => f.type === 'progress')).toEqual({ type: 'progress', pct: 42 });
+    a.close();
+    b.close();
   });
 });
