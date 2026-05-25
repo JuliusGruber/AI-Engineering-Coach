@@ -17,7 +17,9 @@ vi.mock('os', async () => {
 
 vi.mock('../dispatcher', () => ({ dispatch: vi.fn() }));
 
-import { createServer, resolveShimPath, resolveWebviewRoot, type ServerHandle } from '../server';
+import * as net from 'net';
+import { createServer, probeExistingInstance, resolveShimPath, resolveWebviewRoot, type ServerHandle } from '../server';
+import { readServerState, writeServerState } from '../state';
 import { WebSocket as WsClient } from 'ws';
 import { dispatch } from '../dispatcher';
 import type { Analyzer } from '../../core/analyzer';
@@ -291,5 +293,57 @@ describe('dataReady and broadcast', () => {
     expect(await b.waitFor((f) => f.type === 'progress')).toEqual({ type: 'progress', pct: 42 });
     a.close();
     b.close();
+  });
+});
+
+describe('single-instance probe and lifecycle', () => {
+  it('probeExistingInstance returns the URL for a live instance', async () => {
+    const h = await start(); // writes server-state.json (real pid) and serves /health
+    const url = await probeExistingInstance(h.port);
+    expect(url).toBe(h.url);
+  });
+
+  it('probeExistingInstance returns null and clears state for a dead pid', async () => {
+    writeServerState({
+      version: 1,
+      port: 7399,
+      token: 'a'.repeat(64),
+      pid: 999_999, // not a live process → process.kill(pid, 0) throws
+      startedAt: new Date().toISOString(),
+    });
+    expect(await probeExistingInstance(7399)).toBeNull();
+    expect(readServerState()).toBeNull(); // stale state cleaned up
+  });
+
+  it('close() removes server-state.json and frees the port', async () => {
+    const h = await createServer({});
+    expect(readServerState()).not.toBeNull();
+    const port = h.port;
+
+    await h.close();
+    expect(readServerState()).toBeNull();
+
+    // Port is bindable again within 1 s.
+    await new Promise<void>((resolve, reject) => {
+      const probe = net.createServer();
+      probe.once('error', reject);
+      probe.listen(port, '127.0.0.1', () => probe.close(() => resolve()));
+    });
+  });
+
+  it('throws with a --port hint when 7331..7340 are all taken', async () => {
+    const listenSpy = vi
+      .spyOn(net.Server.prototype, 'listen')
+      .mockImplementation(function (this: net.Server) {
+        process.nextTick(() =>
+          this.emit('error', Object.assign(new Error('addr in use'), { code: 'EADDRINUSE' })),
+        );
+        return this;
+      });
+    try {
+      await expect(createServer({})).rejects.toThrow(/--port/);
+    } finally {
+      listenSpy.mockRestore();
+    }
   });
 });
