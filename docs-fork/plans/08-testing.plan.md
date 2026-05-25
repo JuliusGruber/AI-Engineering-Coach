@@ -31,7 +31,7 @@
   - Flags consumed by tests: `--no-open`, `--port <n>`, `--rotate-token`.
 - **01-server** (`server.ts`): `GET /health` (no auth) → `{ ok:true, app:'ai-engineer-coach', version:<string>, pid:<number> }`. WS at `/rpc?t=<token>`; bad token → close code **4001**. Disabled/native/dataReady/progress frames exactly as in 00-overview. Single-instance state at `~/.ai-engineer-coach/server-state.json`, cleared on shutdown. Port-retry range **7331..7340**, then a fatal error whose message contains `--port`.
 - **03-standalone-html** (`standalone-html.ts`): `renderStandaloneHtml({ token, appVersion }): string` is deterministic for a fixed token (the per-call nonce is stripped) — so it snapshots cleanly. It already carries the `replaceOnce` drift guards (CSP-meta and app.js-script anchors) in `standalone-html.test.ts`; this spec **adds** a whole-output snapshot on top (the nav/CSS drift guard from the spec Decisions table).
-- **04-webview-shim** (`webview-shim.ts`): defines `globalThis.acquireVsCodeApi`; on an inbound `standalone-v1-disabled` frame whose `method ∈ BANNER_WORTHY` it injects `#coach-roadmap-banner`. `BANNER_WORTHY` is the curated 10-method set (incl. `createSkill`; excl. proactive `triageSkills`). Smoke test drives a `createSkill` request through `acquireVsCodeApi().postMessage`.
+- **04-webview-shim** (`webview-shim.ts`): defines `globalThis.acquireVsCodeApi`; on an inbound `standalone-v1-disabled` frame whose `method ∈ BANNER_WORTHY` it injects `#coach-roadmap-banner`. `BANNER_WORTHY` is the curated 10-method set (incl. `createSkill`; excl. proactive `triageSkills`). Smoke test drives a `createSkill` request through `acquireVsCodeApi().postMessage`. The shim also provides the **hash → page navigation bridge** (04-webview-shim Task 5): loading `…/?t=<token>#<id>` selects page `<id>` once `dataReady` arrives, and `navigateTo` toggles `active` on `.nav-links a[data-page="<id>"]` (`app.ts:466`) so the active link reflects the current page — the smoke spec relies on **both** (hash to navigate, active-link class to verify the right page rendered rather than a silent fall-back to `dashboard`). The reused upstream `app.ts` has no hash router of its own, so this bridge is what makes the per-page navigation work; `burndown` normalizes to `dashboard` (`app.ts:26-29`).
 - **02-dispatcher** (`v1-allowed.ts` / `dispatcher.ts`): the "exactly 40" assertion lives in `v1-allowed.test.ts` (08-testing does **not** duplicate it). `saveRule ∉ V1_ALLOWED` → disabled; `openExternal ∈ STANDALONE_NATIVE` → runs before the data-ready guard.
 - **06-state** (`state.ts`): `server-state.json` under `os.homedir()/.ai-engineer-coach/`. Tests redirect it by setting the child's `HOME` (POSIX) / `USERPROFILE` (Windows) env to a tmpdir — Node's `os.homedir()` honors those.
 
@@ -51,6 +51,7 @@ Upstream parser facts (verified in-repo, used by the fixture generator):
 7. **`cli with --no-open` is asserted positively (boots + serves), not by observing `open` was not called.** "open not invoked" is unobservable from outside a forked process; it is the 05-cli unit test's assertion (mocked `open`). The integration test confirms `--no-open` does not break boot and the server is reachable — the cross-process half of the contract.
 8. **`coverage:standalone` uses a dedicated report-only config** (`tests/standalone/coverage.config.ts`), not the root config's CLI overrides. The root coverage config enforces 70% thresholds scoped to `src/core/**`; reusing it for `src/standalone/**` would either inherit the wrong scope or fail on the unrelated core thresholds (verified: `--coverage.include='src/standalone/**'` still trips the root 70% gate). A separate config with **no** thresholds reports `src/standalone/` line coverage so the implementer can eyeball the spec's 80% target. Manual only — not wired into CI (matches the spec).
 9. **The Layer 0 audit is a one-time analysis task producing `tests/standalone/PAGE-RPC-AUDIT.md`**, not test code. It is a gated guard (the spec: "one-time, gated"), executed with concrete grep commands and a fixed decision rule; its conclusion (all 10 nav pages degrade gracefully; `BANNER_WORTHY` reconciles to 04's set) is the spec's grilling outcome.
+10. **The smoke test navigates by URL hash through a shim-provided bridge, and asserts the active nav link to verify the page rendered.** The reused upstream `app.ts` has **no** hash router — it navigates only via a document-delegated click on `[data-page]` links and always defaults to `dashboard` (`app.ts:38,451-461`), and additive-only discipline forbids editing it. So the hash → page navigation the spec assumes (`#skills`, `#dashboard`, …; spec `08-testing.md:136-145`, acceptance #4 "reachable by hash URL") is provided by the shim's bridge, which this grill added to **04-webview-shim** (Task 5): it synthesizes a `[data-page]` element and clicks it, applying the hash on `hashchange` and once `dataReady` arrives. The smoke spec therefore (a) keeps hash navigation and (b) asserts `navigateTo`'s `active` class on the matching nav link (`app.ts:466`) — without that assertion a `main#content > *` check would false-green on `dashboard` for every page, leaving acceptance #5 with no real check. `burndown` maps to `dashboard` (`app.ts:26-29`; its nav `<li>` is not emitted while the flag is false, `panel-html.ts:34`). **Cross-plan note:** this reopened the already-grilled `04-webview-shim.plan.md`; that plan now owns the bridge contract 08 consumes.
 
 ## File Structure
 
@@ -896,7 +897,7 @@ git commit -m "test(standalone): add playwright config and CLI global setup/tear
 
 ## Task 8: Layer 3 — smoke spec (10 pages console-clean + banner guards)
 
-The browser smoke test. Loads each of the 10 real nav pages console-clean, then pins the curated-banner behavior: present on `#skills` after a user-initiated `createSkill`, absent on `#dashboard` despite its proactive disabled calls. Covers spec acceptance #5 (per-page render guard) and #8 (banner regression guard).
+The browser smoke test. Navigates to each of the 10 real nav pages **by URL hash** (`…/?t=<token>#<id>`) via the shim's hash bridge (04-webview-shim Task 5), asserts the **right** page rendered (the matching nav link gains `active`) and is console-clean, then pins the curated-banner behavior: present on `#skills` after a user-initiated `createSkill`, absent on `#dashboard` despite its proactive disabled calls. Covers spec acceptance #4 (deep-link/hash navigation), #5 (per-page render guard) and #8 (banner regression guard). The active-link assertion is what makes the per-page guard real — the reused upstream `app.ts` has no hash router of its own, so without the shim bridge every hash would silently render `dashboard` and a bare `main#content > *` check would false-green.
 
 **Files:**
 - Create: `tests/standalone/playwright/smoke.spec.ts`
@@ -913,22 +914,34 @@ const { origin, token } = JSON.parse(
   fs.readFileSync(fileURLToPath(new URL('./.runtime.json', import.meta.url)), 'utf8'),
 ) as { origin: string; token: string };
 
-// The 10 real nav page ids (burndown redirects to dashboard while FF_TOKEN_REPORTING is false).
+// The 10 real nav page ids. The shim's hash bridge (04-webview-shim Task 5) selects the
+// page from `#<id>` after dataReady; navigateTo toggles `active` on the matching nav link
+// (app.ts:466). burndown's nav <li> is not emitted while FF_TOKEN_REPORTING_ENABLED is
+// false (panel-html.ts:34) and navigateTo('burndown') normalizes to 'dashboard'
+// (app.ts:26-29), so its active link is dashboard.
 const NAV = [
   'dashboard', 'timeline', 'image-gallery', 'output', 'burndown',
   'patterns', 'anti-patterns', 'skills', 'config-health', 'level-up',
 ];
 
 const pageUrl = (id: string): string => `${origin}/?t=${token}#${id}`;
+// The nav link expected to be `active` once the page rendered (burndown → dashboard).
+const activeId = (id: string): string => (id === 'burndown' ? 'dashboard' : id);
+const activeLink = (id: string): string => `.nav-links a[data-page="${activeId(id)}"]`;
 
 for (const id of NAV) {
-  test(`#${id} renders with zero console errors`, async ({ page }) => {
+  test(`#${id} renders the right page with zero console errors`, async ({ page }) => {
     const errors: string[] = [];
     page.on('console', (m: ConsoleMessage) => { if (m.type() === 'error') errors.push(m.text()); });
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.goto(pageUrl(id), { waitUntil: 'load' });
-    // The webview gates rendering on dataReady (app.ts:444); wait for #content to populate.
+    // The shim's hash bridge navigates after dataReady; the active nav link proves the
+    // RIGHT page rendered (not a silent fall-back to dashboard if the hash were ignored).
+    // This is the real per-page check acceptance #5 needs — `main#content > *` alone would
+    // pass on dashboard 10 times. (auto-retrying assertion: waits for the class to appear.)
+    await expect(page.locator(activeLink(id))).toHaveClass(/active/, { timeout: 15_000 });
+    // ...and the page actually rendered content (degraded sections still emit nodes).
     await expect(page.locator('main#content')).toBeVisible();
     await expect.poll(() => page.locator('main#content > *').count(), { timeout: 15_000 })
       .toBeGreaterThan(0);
@@ -939,7 +952,7 @@ for (const id of NAV) {
 
 test('skills page shows the roadmap banner after a user-initiated createSkill', async ({ page }) => {
   await page.goto(pageUrl('skills'), { waitUntil: 'load' });
-  await expect(page.locator('main#content')).toBeVisible();
+  await expect(page.locator('.nav-links a[data-page="skills"]')).toHaveClass(/active/, { timeout: 15_000 });
   // Drive a genuine banner-worthy method through the shim's outbound channel. The host
   // returns standalone-v1-disabled; the shim (createSkill ∈ BANNER_WORTHY) injects the banner.
   await page.evaluate(() => {
@@ -951,7 +964,7 @@ test('skills page shows the roadmap banner after a user-initiated createSkill', 
 
 test('dashboard does NOT show the roadmap banner on its proactive disabled calls', async ({ page }) => {
   await page.goto(pageUrl('dashboard'), { waitUntil: 'load' });
-  await expect(page.locator('main#content')).toBeVisible();
+  await expect(page.locator('.nav-links a[data-page="dashboard"]')).toHaveClass(/active/, { timeout: 15_000 });
   await expect.poll(() => page.locator('main#content > *').count(), { timeout: 15_000 })
     .toBeGreaterThan(0);
   // Let the proactive triageSkills/discoverCatalog/triageCatalog calls round-trip (silent-disabled).
@@ -967,7 +980,7 @@ Run:
 npm run build && npx playwright install --with-deps chromium && npm run test:playwright:standalone
 ```
 (`test:playwright:standalone` = `playwright test --config=tests/standalone/playwright/playwright.config.ts`, from 07-build.)
-Expected: PASS — 12 tests (10 page + 2 banner) green on Chromium. If a specific `#<id>` fails on console errors, that page does **not** degrade gracefully on the fixture — return to Task 1's audit (it is the regression this layer exists to catch) and escalate per the decision rule. If the `createSkill` banner test fails, confirm `acquireVsCodeApi` is defined (the shim loaded) and `createSkill ∈ BANNER_WORTHY` (04).
+Expected: PASS — 12 tests (10 page + 2 banner) green on Chromium. If the **active-link** assertion times out for some `#<id>`, the shim's hash bridge (04-webview-shim Task 5) is missing or regressed — the hash was ignored and the page stayed on `dashboard`; fix the bridge there (this is the navigation contract 08 depends on). If a specific `#<id>` instead fails on **console errors**, that page does **not** degrade gracefully on the fixture — return to Task 1's audit (it is the regression this layer exists to catch) and escalate per the decision rule. If the `createSkill` banner test fails, confirm `acquireVsCodeApi` is defined (the shim loaded) and `createSkill ∈ BANNER_WORTHY` (04).
 
 - [ ] **Step 3: Commit**
 
@@ -1126,7 +1139,8 @@ git commit -m "test(standalone): finalize verification stack and additive-only c
 | Acceptance #2 `npm run test:integration:standalone` exits 0 | Task 10 Step 2 | post-build run |
 | Acceptance #3 Playwright exits 0 (mac/linux) | Task 10 Step 3 | smoke run |
 | Acceptance #4 CI green on 3 OS (Playwright skipped on Windows) | Task 9 | workflow |
-| Acceptance #5 smoke visits all 10 nav pages; console-error fails it; standalone-html drift guard | Tasks 2, 8 | snapshot + per-page guard |
+| Acceptance #4 hash/deep-link navigation (pages reachable by `#<id>` URL) | Task 8 (via 04 Task 5 bridge) | active-link assertion per page |
+| Acceptance #5 smoke visits all 10 nav pages; console-error fails it; standalone-html drift guard | Tasks 2, 8 | snapshot + per-page guard (active-link verifies the right page rendered) |
 | Acceptance #6 removing a `V1_ALLOWED` method fails a per-module unit test ("exactly 40" in 02) | (02-dispatcher) | not duplicated — `v1-allowed.test.ts` owns it |
 | Acceptance #7 bare `require(cli.js)` does not throw | Task 3 | require-guard test |
 | Acceptance #8 banner absent on `#dashboard`, present on `#skills` after `createSkill` | Task 8 | two banner tests |
@@ -1141,6 +1155,7 @@ No `TBD`/`TODO`/"handle edge cases"/"similar to Task N". Every test/file step sh
 - The stderr URL line regex (`coach (already )?running at http://127.0.0.1:<port>/?t=<64hex>`) matches 05-cli's exact `process.stderr.write` strings (`coach running at ${handle.url}` / `coach already running at ${existing}`), and `handle.url` is `http://127.0.0.1:<port>/?t=<token>` (01-server).
 - `/health` payload `{ ok, app:'ai-engineer-coach', version, pid }`, the `dataReady` frame `{ type:'dataReady', currentWorkspace:'' }` (asserted via `toMatchObject({type:'dataReady'})`), the disabled error `{ data:{ error, code:'standalone-v1-disabled', method } }`, and WS close `4001` all match 01-server verbatim.
 - `saveRule ∉ V1_ALLOWED` and `openExternal ∈ STANDALONE_NATIVE` match 02-dispatcher; `createSkill ∈ BANNER_WORTHY` and `#coach-roadmap-banner` match 04-webview-shim; `acquireVsCodeApi` is the shim's global (04).
+- The smoke spec's hash navigation (`…#<id>`) and active-link assertion (`.nav-links a[data-page="<id>"]` gains `active`) match 04-webview-shim's hash bridge (Task 5) and `app.ts`'s `navigateTo` (`app.ts:466`); the `burndown → dashboard` normalization matches `app.ts:26-29`, and burndown's nav `<li>` being absent matches `panel-html.ts:34` while `FF_TOKEN_REPORTING_ENABLED` is false. The `main#content` selector matches `panel-html.ts:61`.
 - `renderStandaloneHtml({ token, appVersion })` and its emitted strings (`coach-token`, `/standalone-shim.js`, `/dist/webview/app.js`, `/dist/webview/styles.css`, no `data-page="burndown"`) match 03-standalone-html — the snapshot pins them.
 - Claude fixture layout (`~/.claude/projects/<encoded>/<sessionId>.jsonl`) and line schema (`type`, `timestamp`, `sessionId`, `message.role/content/model/usage`) match `src/core/parser-claude.ts`; `HOME`/`USERPROFILE` redirect matches 06-state's `os.homedir()` usage.
 - Scripts referenced — `test:integration:standalone` (finalized here), `test:playwright:standalone`, `pack:check`, `build:standalone` — match 07-build's `package.json` keys; `coverage:standalone` is the one new script this plan adds.
