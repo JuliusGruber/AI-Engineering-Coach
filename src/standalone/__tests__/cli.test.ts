@@ -10,6 +10,35 @@ vi.mock('../parse-bootstrap', () => ({
 vi.mock('open', () => ({ default: vi.fn() }));
 
 import { runCli } from '../cli';
+import { createServer, probeExistingInstance, type ServerHandle } from '../server';
+import { bootstrapParse } from '../parse-bootstrap';
+import open from 'open';
+
+const mockedCreateServer = vi.mocked(createServer);
+const mockedProbe = vi.mocked(probeExistingInstance);
+const mockedBootstrap = vi.mocked(bootstrapParse);
+const mockedOpen = vi.mocked(open);
+
+const TOKEN = 'a'.repeat(64);
+
+function fakeHandle(): ServerHandle {
+  return {
+    url: `http://127.0.0.1:7331/?t=${TOKEN}`,
+    port: 7331,
+    token: TOKEN,
+    setData: vi.fn(),
+    broadcast: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+// Retrieve a process signal handler that runCli registered, so the test can trigger
+// shutdown deterministically without delivering a real OS signal to the test runner.
+function triggerSignal(onSpy: ReturnType<typeof vi.spyOn>, signal: 'SIGINT' | 'SIGTERM'): void {
+  const call = onSpy.mock.calls.find((c: unknown[]) => c[0] === signal);
+  if (!call) throw new Error(`runCli did not register a ${signal} handler`);
+  (call[1] as () => void)();
+}
 
 function captureStream(stream: NodeJS.WriteStream): { text: () => string; restore: () => void } {
   let buf = '';
@@ -58,5 +87,89 @@ describe('runCli — flags and early exits', () => {
     expect(code).toBe(2);
     expect(errCap.text()).toContain('unknown flag: --made-up-flag');
     expect(errCap.text()).toContain('coach --help');
+  });
+});
+
+describe('runCli — boot', () => {
+  it('reuses a live instance: prints, opens, exits 0 without starting a server', async () => {
+    const existingUrl = `http://127.0.0.1:7331/?t=${'b'.repeat(64)}`;
+    mockedProbe.mockResolvedValue(existingUrl);
+
+    const code = await runCli(['node', 'coach']);
+
+    expect(code).toBe(0);
+    expect(errCap.text()).toContain('coach already running at');
+    expect(mockedOpen).toHaveBeenCalledWith(existingUrl);
+    expect(mockedCreateServer).not.toHaveBeenCalled();
+  });
+
+  it('fresh boot serves first, prints URL, opens, parses, calls setData once; SIGINT -> 130', async () => {
+    mockedProbe.mockResolvedValue(null);
+    const handle = fakeHandle();
+    mockedCreateServer.mockResolvedValue(handle);
+    mockedBootstrap.mockResolvedValue({ analyzer: {} as never, parseResult: {} as never });
+    const onSpy = vi.spyOn(process, 'on');
+
+    const p = runCli(['node', 'coach']);
+    await vi.waitFor(() => expect(handle.setData).toHaveBeenCalledOnce());
+
+    expect(mockedCreateServer).toHaveBeenCalledWith({ port: 7331, token: undefined, logFile: undefined });
+    expect(errCap.text()).toContain(`coach running at ${handle.url}`);
+    expect(mockedOpen).toHaveBeenCalledWith(handle.url);
+    expect(mockedBootstrap).toHaveBeenCalledWith(expect.any(Function));
+
+    // Serve-then-parse (acceptance 4a): createServer was called before bootstrapParse.
+    expect(mockedCreateServer.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedBootstrap.mock.invocationCallOrder[0],
+    );
+
+    // Progress forwarding: the callback handed to bootstrapParse broadcasts a progress frame.
+    const forward = mockedBootstrap.mock.calls[0][0] as unknown as (p: Record<string, unknown>) => void;
+    forward({ phase: 2, pct: 40 });
+    expect(handle.broadcast).toHaveBeenCalledWith({ type: 'progress', phase: 2, pct: 40 });
+
+    triggerSignal(onSpy, 'SIGINT');
+    expect(await p).toBe(130);
+    expect(handle.close).toHaveBeenCalledOnce();
+  });
+
+  it('--no-open does not call open', async () => {
+    mockedProbe.mockResolvedValue(null);
+    const handle = fakeHandle();
+    mockedCreateServer.mockResolvedValue(handle);
+    mockedBootstrap.mockResolvedValue({ analyzer: {} as never, parseResult: {} as never });
+    const onSpy = vi.spyOn(process, 'on');
+
+    const p = runCli(['node', 'coach', '--no-open']);
+    await vi.waitFor(() => expect(handle.setData).toHaveBeenCalledOnce());
+
+    expect(mockedOpen).not.toHaveBeenCalled();
+
+    triggerSignal(onSpy, 'SIGINT');
+    await p;
+  });
+
+  it('--rotate-token passes a fresh 64-hex token to createServer', async () => {
+    mockedProbe.mockResolvedValue(null);
+    const handle = fakeHandle();
+    mockedCreateServer.mockResolvedValue(handle);
+    mockedBootstrap.mockResolvedValue({ analyzer: {} as never, parseResult: {} as never });
+    const onSpy = vi.spyOn(process, 'on');
+
+    const p = runCli(['node', 'coach', '--rotate-token', '--no-open']);
+    await vi.waitFor(() => expect(handle.setData).toHaveBeenCalledOnce());
+
+    const opts = mockedCreateServer.mock.calls[0][0];
+    expect(opts.token).toMatch(/^[0-9a-f]{64}$/);
+
+    triggerSignal(onSpy, 'SIGINT');
+    await p;
+  });
+
+  it('propagates a fatal createServer error (bin/coach maps it to exit 1)', async () => {
+    mockedProbe.mockResolvedValue(null);
+    mockedCreateServer.mockRejectedValue(new Error('no free port in 7331..7340'));
+
+    await expect(runCli(['node', 'coach', '--no-open'])).rejects.toThrow('no free port');
   });
 });

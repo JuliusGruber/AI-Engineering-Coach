@@ -2,6 +2,10 @@
 // The `coach` command: parse flags, reuse a live instance or serve-then-parse,
 // open the browser, and shut down cleanly on signal. See docs-fork/specs/05-cli.md.
 import { parseFlags, FlagError, type ParsedFlags } from './flags';
+import { createServer, probeExistingInstance, type ServerHandle } from './server';
+import { bootstrapParse } from './parse-bootstrap';
+import open from 'open';
+import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +61,52 @@ export async function runCli(argv: string[]): Promise<number> {
     return 0;
   }
 
-  // Boot is added in Task 5.
-  return 0;
+  const existing = await probeExistingInstance(flags.port);
+  if (existing) {
+    process.stderr.write(`coach already running at ${existing}\n`);
+    if (flags.open) {
+      try {
+        await open(existing);
+      } catch {
+        /* warn-and-go: a missing browser must not fail the reuse path */
+      }
+    }
+    return 0;
+  }
+
+  const token = flags.rotateToken ? randomBytes(32).toString('hex') : undefined;
+
+  // Serve first -- the browser shows the loading shell while we parse.
+  const handle = await createServer({ port: flags.port, token, logFile: flags.logFile ?? undefined });
+  process.stderr.write(`coach running at ${handle.url}\n`);
+  if (flags.open) {
+    try {
+      await open(handle.url);
+    } catch (e) {
+      process.stderr.write(`(browser open failed: ${(e as Error).message})\n`);
+    }
+  }
+
+  // Then parse, forwarding progress; setData broadcasts dataReady to the open browser.
+  const { analyzer, parseResult } = await bootstrapParse((p) => handle.broadcast({ type: 'progress', ...p }));
+  handle.setData(analyzer, parseResult);
+
+  return await new Promise<number>((resolve) => installShutdownHandlers(handle, resolve));
+}
+
+// SIGINT -> 130, SIGTERM -> 143 (128 + signal). Each handler removes both listeners
+// so the process can exit and tests leave no dangling registrations.
+function installShutdownHandlers(handle: ServerHandle, resolve: (code: number) => void): void {
+  let done = false;
+  const shutdown = (code: number) => (): void => {
+    if (done) return;
+    done = true;
+    process.removeListener('SIGINT', onInt);
+    process.removeListener('SIGTERM', onTerm);
+    void handle.close().then(() => resolve(code));
+  };
+  const onInt = shutdown(130);
+  const onTerm = shutdown(143);
+  process.on('SIGINT', onInt);
+  process.on('SIGTERM', onTerm);
 }
