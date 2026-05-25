@@ -53,3 +53,11 @@ export function readServerState(): ServerState | null {
     return null;
   }
 }
+
+export function clearServerState(): void {
+  try {
+    fs.unlinkSync(serverStateFile());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}

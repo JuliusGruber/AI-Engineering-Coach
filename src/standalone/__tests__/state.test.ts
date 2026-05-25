@@ -2,7 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readServerState, stateDir, writeServerState, type ServerState } from '../state';
+import {
+  clearServerState,
+  readServerState,
+  stateDir,
+  writeServerState,
+  type ServerState,
+} from '../state';
 
 const mockOs = vi.hoisted(() => ({
   homedir: vi.fn(),
@@ -92,5 +98,16 @@ describe('schema version', () => {
     expect(readServerState()).toBeNull();
     expect(warn).toHaveBeenCalled();
     expect(fs.existsSync(file)).toBe(true); // not overwritten, not quarantined
+  });
+});
+
+describe('clearServerState', () => {
+  it('clear server state is idempotent', () => {
+    writeServerState(sampleState());
+    expect(() => {
+      clearServerState();
+      clearServerState();
+    }).not.toThrow();
+    expect(readServerState()).toBeNull();
   });
 });
