@@ -1,5 +1,5 @@
 {
-  "name": "ai-engineer-coach",
+  "name": "@JuliusGruber/ai-engineer-coach",
   "displayName": "AI Engineer Coach",
   "description": "Analyze your AI coding assistant usage across VS Code, Xcode, Claude, Codex, and OpenCode. Read-only, zero telemetry.",
   "version": "0.1.0",
@@ -17,7 +17,8 @@
     "url": "https://github.com/microsoft/AI-Engineering-Coach/issues"
   },
   "engines": {
-    "vscode": "^1.118.0"
+    "vscode": "^1.118.0",
+    "node": ">=20"
   },
   "categories": [
     "Other",
@@ -41,6 +42,9 @@
     "onView:aiEngineerCoach.welcome"
   ],
   "main": "./dist/extension.js",
+  "bin": {
+    "coach": "bin/coach"
+  },
   "contributes": {
     "commands": [
       {
@@ -106,7 +110,13 @@
     "check-size": "node scripts/check-bundle-size.mjs",
     "test:e2e": "npx playwright test",
     "lockfile-lint": "lockfile-lint",
-    "prepare": "husky"
+    "prepare": "husky",
+    "serve": "node ./dist/standalone/cli.js",
+    "dev:standalone": "node --watch ./dist/standalone/cli.js",
+    "build:standalone": "node esbuild.mjs",
+    "test:integration:standalone": "vitest run tests/standalone/integration",
+    "test:playwright:standalone": "playwright test --config=tests/standalone/playwright/playwright.config.ts",
+    "pack:check": "npm pack --dry-run"
   },
   "lint-staged": {
     "*.ts": [
@@ -154,5 +164,16 @@
     "preact": "10.29.2",
     "ws": "8.21.0",
     "zod": "4.4.3"
+  },
+  "files": [
+    "dist/standalone/",
+    "dist/webview/",
+    "bin/",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
