@@ -38,7 +38,14 @@ export function readServerState(): ServerState | null {
   if (!fs.existsSync(file)) return null;
   const raw = fs.readFileSync(file, 'utf8');
   try {
-    return JSON.parse(raw) as ServerState;
+    const parsed = JSON.parse(raw) as Partial<ServerState>;
+    if (parsed?.version !== 1) {
+      console.warn(
+        `[coach] unknown server-state.json schema version ${parsed?.version}; ignoring`,
+      );
+      return null;
+    }
+    return parsed as ServerState;
   } catch {
     const broken = `${file}.broken-${Date.now()}`;
     fs.renameSync(file, broken);

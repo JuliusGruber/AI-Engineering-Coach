@@ -79,3 +79,18 @@ describe('corruption recovery', () => {
     expect(warn).toHaveBeenCalled();
   });
 });
+
+describe('schema version', () => {
+  it('read handles unknown schema version', () => {
+    const file = path.join(stateDir(), 'server-state.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ version: 99, port: 1, token: 'x', pid: 1, startedAt: 'x' }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(readServerState()).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    expect(fs.existsSync(file)).toBe(true); // not overwritten, not quarantined
+  });
+});
