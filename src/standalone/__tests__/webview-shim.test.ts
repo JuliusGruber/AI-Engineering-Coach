@@ -63,6 +63,7 @@ beforeEach(() => {
   document.head.innerHTML = '';
   document.body.innerHTML = '';
   localStorage.clear();
+  window.location.hash = '';
   delete (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
   MockWebSocket.instances = [];
   (globalThis as { WebSocket?: unknown }).WebSocket = MockWebSocket;
@@ -301,5 +302,54 @@ describe('roadmap banner', () => {
     ws.message(JSON.stringify(disabledFrame('installSkill')));
 
     expect(document.querySelectorAll(BANNER_ID)).toHaveLength(1);
+  });
+});
+
+describe('hash navigation bridge', () => {
+  // Capture the data-page of any synthesized nav click (jsdom has no app.ts handler).
+  function captureNav(): { page: () => string | undefined; stop: () => void } {
+    let page: string | undefined;
+    const onClick = (e: Event): void => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-page]');
+      if (el) page = el.dataset.page;
+    };
+    document.addEventListener('click', onClick);
+    return { page: () => page, stop: () => document.removeEventListener('click', onClick) };
+  }
+
+  it('hashchange synthesizes a [data-page] click for the hash id', () => {
+    installWithToken();
+    const nav = captureNav();
+    window.location.hash = '#timeline';
+    window.dispatchEvent(new Event('hashchange')); // drive deterministically
+    expect(nav.page()).toBe('timeline');
+    // the synthesized element is removed after the click (no DOM leak)
+    expect(document.querySelector('body > a[data-page]')).toBeNull();
+    nav.stop();
+  });
+
+  it('applies the URL hash once a dataReady frame arrives (after onDataReady)', () => {
+    vi.useFakeTimers();
+    window.location.hash = '#skills'; // set BEFORE install so no stray hashchange fires
+    installWithToken();
+    const nav = captureNav();
+    const ws = MockWebSocket.instances[0];
+
+    ws.message(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
+    expect(nav.page()).toBeUndefined(); // deferred — not applied synchronously
+    vi.advanceTimersByTime(1); // fire setTimeout(navFromHash, 0)
+    expect(nav.page()).toBe('skills');
+    nav.stop();
+  });
+
+  it('does not navigate on dataReady when there is no hash', () => {
+    vi.useFakeTimers();
+    window.location.hash = '';
+    installWithToken();
+    const nav = captureNav();
+    MockWebSocket.instances[0].message(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
+    vi.advanceTimersByTime(1);
+    expect(nav.page()).toBeUndefined();
+    nav.stop();
   });
 });

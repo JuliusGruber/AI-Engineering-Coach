@@ -31,6 +31,22 @@ export function installShim(): void {
   let ws: WebSocket | null = null;
   let attempt = 0;
 
+  // app.ts has no hash router — it navigates only via the document-delegated click on
+  // [data-page] links (app.ts:451-461) and defaults to 'dashboard'. We cannot edit
+  // app.ts (additive-only), so to honor deep-link URLs (#skills, #rule-editor, …) we
+  // synthesize a [data-page] element and click it, reusing that delegation. This reaches
+  // every route, incl. the deep-link-only ones with no nav link and burndown (→dashboard).
+  function navFromHash(): void {
+    const id = location.hash.slice(1);
+    if (!id) return;
+    const el = document.createElement('a');
+    el.dataset.page = id;
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    el.click();
+    el.remove();
+  }
+
   function showRoadmapBanner(): void {
     const ID = 'coach-roadmap-banner';
     let banner = document.getElementById(ID);
@@ -78,11 +94,15 @@ export function installShim(): void {
         return;
       }
       // Banner decision lives here — the shim is the only place that sees every frame.
-      const f = frame as { data?: { code?: string; method?: string } };
+      const f = frame as { type?: string; data?: { code?: string; method?: string } };
       if (f.data?.code === 'standalone-v1-disabled' && BANNER_WORTHY.has(f.data.method ?? '')) {
         showRoadmapBanner();
       }
-      window.postMessage(frame, '*'); // always forward; page handles data.error
+      window.postMessage(frame, '*'); // always forward; page handles data.error + onDataReady
+      // app.ts has no hash router and onDataReady (just queued via postMessage above)
+      // resets to 'dashboard'; re-apply the URL hash on the next task so a deep-link wins.
+      // setTimeout(0) runs after the posted-message task in every major browser.
+      if (f.type === 'dataReady' && location.hash) setTimeout(navFromHash, 0);
     });
     ws.addEventListener('close', () => {
       ws = null;
@@ -113,6 +133,8 @@ export function installShim(): void {
     },
     setState: (s: unknown) => localStorage.setItem('coach-state', JSON.stringify(s)),
   });
+
+  window.addEventListener('hashchange', navFromHash);
 
   if (/^[0-9a-f]{64}$/.test(token)) connect();
   else console.warn('[coach] missing/invalid coach-token meta; RPC disabled');
