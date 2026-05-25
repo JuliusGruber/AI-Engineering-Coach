@@ -18,6 +18,63 @@ vi.mock('os', async () => {
 vi.mock('../dispatcher', () => ({ dispatch: vi.fn() }));
 
 import { createServer, resolveShimPath, resolveWebviewRoot, type ServerHandle } from '../server';
+import { WebSocket as WsClient } from 'ws';
+import { dispatch } from '../dispatcher';
+
+const mockedDispatch = vi.mocked(dispatch);
+
+class Client {
+  ws: WsClient;
+  frames: Array<Record<string, unknown>> = [];
+  private waiters: Array<{ pred: (f: Record<string, unknown>) => boolean; resolve: (f: Record<string, unknown>) => void }> = [];
+
+  constructor(url: string) {
+    this.ws = new WsClient(url);
+    this.ws.on('message', (raw) => {
+      const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
+      this.frames.push(frame);
+      this.waiters = this.waiters.filter((w) => {
+        if (w.pred(frame)) {
+          w.resolve(frame);
+          return false;
+        }
+        return true;
+      });
+    });
+  }
+  opened(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.ws.once('open', () => resolve());
+      this.ws.once('error', reject);
+    });
+  }
+  closedCode(): Promise<number> {
+    return new Promise((resolve) => this.ws.once('close', (code) => resolve(code)));
+  }
+  send(obj: unknown): void {
+    this.ws.send(JSON.stringify(obj));
+  }
+  sendRaw(text: string): void {
+    this.ws.send(text);
+  }
+  waitFor(pred: (f: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
+    const hit = this.frames.find(pred);
+    if (hit) return Promise.resolve(hit);
+    return new Promise((resolve) => this.waiters.push({ pred, resolve }));
+  }
+  close(): void {
+    try {
+      this.ws.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function wsUrl(h: ServerHandle, token?: string): string {
+  const base = `ws://127.0.0.1:${h.port}/rpc`;
+  return token === undefined ? base : `${base}?t=${token}`;
+}
 
 const ASSET_NAME = '__coach_test_asset__.js';
 const assetPath = path.join(resolveWebviewRoot(), ASSET_NAME);
@@ -49,6 +106,7 @@ const handles: ServerHandle[] = [];
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'coach-srv-'));
   mockOs.homedir.mockReturnValue(tmpHome);
+  mockedDispatch.mockReset(); // clear call history + queued once-results between tests
 });
 
 afterEach(async () => {
@@ -117,5 +175,75 @@ describe('HTTP routes', () => {
   it('returns 404 for an unknown route', async () => {
     const h = await start();
     expect((await fetch(`${origin(h)}/nope?t=${h.token}`)).status).toBe(404);
+  });
+});
+
+describe('WebSocket protocol', () => {
+  it('rejects a connection without a token (close 4001)', async () => {
+    const h = await start();
+    const client = new Client(wsUrl(h)); // no ?t=
+    expect(await client.closedCode()).toBe(4001);
+  });
+
+  it('dispatches an allowed method round-trip', async () => {
+    mockedDispatch.mockResolvedValueOnce({ ok: true, data: { value: 42 } });
+    const h = await start();
+    const client = new Client(wsUrl(h, h.token));
+    await client.opened();
+
+    client.send({ type: 'request', id: 'x', method: 'getStats', params: { a: 1 } });
+    const res = await client.waitFor((f) => f.type === 'response' && f.id === 'x');
+
+    expect(res).toEqual({ type: 'response', id: 'x', data: { value: 42 } });
+    expect(mockedDispatch).toHaveBeenCalledWith('getStats', { a: 1 }, expect.any(Object));
+    client.close();
+  });
+
+  it('nests a disabled-method error inside data, with no sibling error field', async () => {
+    mockedDispatch.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'standalone-v1-disabled', method: 'saveRule' },
+    });
+    const h = await start();
+    const client = new Client(wsUrl(h, h.token));
+    await client.opened();
+
+    client.send({ type: 'request', id: 'y', method: 'saveRule' });
+    const res = await client.waitFor((f) => f.type === 'response' && f.id === 'y');
+
+    const data = res.data as { error?: unknown; code?: unknown; method?: unknown };
+    expect(typeof data.error).toBe('string');
+    expect(data.error).toBeTruthy();
+    expect(data.code).toBe('standalone-v1-disabled');
+    expect(data.method).toBe('saveRule');
+    expect('error' in res).toBe(false); // never a sibling field
+    client.close();
+  });
+
+  it('answers bad JSON with a bad-request error inside data (id null)', async () => {
+    const h = await start();
+    const client = new Client(wsUrl(h, h.token));
+    await client.opened();
+
+    client.sendRaw('not json {');
+    const res = await client.waitFor((f) => f.type === 'response');
+
+    expect(res).toEqual({ type: 'response', id: null, data: { error: 'invalid json', code: 'bad-request' } });
+    expect(mockedDispatch).not.toHaveBeenCalled();
+    client.close();
+  });
+
+  it('answers a malformed envelope with a bad-request error', async () => {
+    const h = await start();
+    const client = new Client(wsUrl(h, h.token));
+    await client.opened();
+
+    client.send({ type: 'notrequest', id: 'z' });
+    const res = await client.waitFor((f) => f.type === 'response');
+
+    const data = res.data as { code?: unknown };
+    expect(res.id).toBe('z');
+    expect(data.code).toBe('bad-request');
+    client.close();
   });
 });
