@@ -292,34 +292,36 @@ export async function createServer(opts: ServerOptions): Promise<ServerHandle> {
     broadcast({ type: 'dataReady', currentWorkspace: '' });
   }
 
-  let closed = false;
+  let closePromise: Promise<void> | undefined;
   const onSignal = (): void => {
     void close();
   };
-  async function close(): Promise<void> {
-    if (closed) return;
-    closed = true;
-    process.removeListener('SIGINT', onSignal);
-    process.removeListener('SIGTERM', onSignal);
-    for (const socket of clients) {
-      try {
-        socket.close(1001);
-      } catch {
-        /* ignore */
+  function close(): Promise<void> {
+    if (closePromise) return closePromise;
+    closePromise = (async () => {
+      process.removeListener('SIGINT', onSignal);
+      process.removeListener('SIGTERM', onSignal);
+      for (const socket of clients) {
+        try {
+          socket.close(1001);
+        } catch {
+          /* ignore */
+        }
       }
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 50)); // brief graceful drain
-    for (const socket of clients) {
-      try {
-        socket.terminate();
-      } catch {
-        /* ignore */
+      await new Promise<void>((resolve) => setTimeout(resolve, 50)); // brief graceful drain
+      for (const socket of clients) {
+        try {
+          socket.terminate();
+        } catch {
+          /* ignore */
+        }
       }
-    }
-    await new Promise<void>((resolve) => wss.close(() => resolve()));
-    httpServer.closeAllConnections(); // drop lingering keep-alive sockets so the port frees immediately
-    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
-    clearServerState();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      httpServer.closeAllConnections(); // drop lingering keep-alive sockets so the port frees immediately
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      clearServerState();
+    })();
+    return closePromise;
   }
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
