@@ -10,22 +10,17 @@ import type { ParseResult } from '../core/cache';
 
 type ProgressFn = (p: LoadProgress) => void;
 
-function emptyResult(): ParseResult {
-  return {
-    workspaces: new Map(),
-    sessions: [],
-    editLocIndex: new Map(),
-    sessionSourceIndex: new Map(),
-  };
-}
-
 export async function bootstrapParse(
   onProgress: ProgressFn,
 ): Promise<{ analyzer: Analyzer; parseResult: ParseResult }> {
   onProgress({ phase: 0, detail: 'Discovering log directories', pct: 0 });
 
+  // findLogsDirs() only covers VS Code Copilot + Xcode. External harnesses
+  // (Claude/Codex/OpenCode) are discovered *inside* the worker via their own
+  // find*Dirs(), independent of `dirs` -- so always run the worker. Gating on
+  // dirs.length left Copilot-less machines (e.g. Claude-only) showing nothing.
   const dirs = findLogsDirs();
-  const parseResult = dirs.length === 0 ? emptyResult() : await parseAllLogsViaWorker(dirs, (p) => onProgress(p));
+  const parseResult = await parseAllLogsViaWorker(dirs, (p) => onProgress(p));
 
   const analyzer = new Analyzer(parseResult.sessions, parseResult.editLocIndex, parseResult.workspaces);
   return { analyzer, parseResult };
