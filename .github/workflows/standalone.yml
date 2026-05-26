@@ -1,0 +1,24 @@
+name: standalone
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['20']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run build && npm run build:standalone
+      - run: npm test -- --reporter=verbose
+      - run: npm run test:integration:standalone
+      - if: runner.os != 'Windows'   # Playwright on Windows in Actions is flaky; deferred to v1.1
+        run: npx playwright install --with-deps chromium
+      - if: runner.os != 'Windows'
+        run: npm run test:playwright:standalone
+      - run: npm run pack:check
