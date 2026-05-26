@@ -116,7 +116,8 @@
     "build:standalone": "node esbuild.mjs",
     "test:integration:standalone": "vitest run tests/standalone/integration",
     "test:playwright:standalone": "playwright test --config=tests/standalone/playwright/playwright.config.ts",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "coverage:standalone": "vitest run --config tests/standalone/coverage.config.ts"
   },
   "lint-staged": {
     "*.ts": [
