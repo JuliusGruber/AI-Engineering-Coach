@@ -14,4 +14,4 @@ are blocked, not skipped.
 - [x] implemented — 01-server.plan.md
 - [x] implemented — 05-cli.plan.md
 - [x] implemented — 07-build.plan.md
-- [ ] 08-testing
+- [x] implemented — 08-testing.plan.md
