@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BANNER_WORTHY, installShim } from '../webview-shim';
+import { BANNER_WORTHY, RESOLVE_EMPTY_WHEN_DISABLED, installShim } from '../webview-shim';
 
 const VALID_TOKEN = 'a'.repeat(64); // 64 hex chars
 
@@ -302,6 +302,35 @@ describe('roadmap banner', () => {
     ws.message(JSON.stringify(disabledFrame('installSkill')));
 
     expect(document.querySelectorAll(BANNER_ID)).toHaveLength(1);
+  });
+
+  it('neutralizes a disabled RESOLVE_EMPTY method to empty data (rpc resolves) and still banners', () => {
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+
+    ws.message(JSON.stringify(disabledFrame('getRuleEditor')));
+
+    // getRuleEditor ∈ BANNER_WORTHY → banner still fires.
+    expect(document.querySelector(BANNER_ID)).not.toBeNull();
+    // Forwarded frame carries empty data (no error) so rpc() resolves and
+    // renderAntiPatterns degrades instead of crashing into the error boundary.
+    expect(window.postMessage).toHaveBeenCalledWith(
+      { type: 'response', id: '7', data: {} },
+      '*',
+    );
+    // The original error-bearing frame is NOT forwarded (would make rpc() reject).
+    expect(window.postMessage).not.toHaveBeenCalledWith(disabledFrame('getRuleEditor'), '*');
+  });
+
+  it('forwards a non-RESOLVE_EMPTY banner method unchanged (it keeps rejecting)', () => {
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+    const frame = disabledFrame('createSkill'); // banner-worthy but a user-action call
+
+    ws.message(JSON.stringify(frame));
+
+    expect(RESOLVE_EMPTY_WHEN_DISABLED.has('createSkill')).toBe(false);
+    expect(window.postMessage).toHaveBeenCalledWith(frame, '*'); // original error frame
   });
 });
 
