@@ -5,6 +5,7 @@
 // Format per src/core/parser-claude.ts (JSONL: one JSON object per line).
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const MODELS = ['claude-opus-4-20250805', 'claude-sonnet-4-20250514'];
 const TOOLS = ['Write', 'Edit', 'Read', 'Skill'];
@@ -53,8 +54,12 @@ export function seedHome(home) {
   return projectsDir;
 }
 
-// `node seed-home.mjs <home>` for manual inspection.
-if (process.argv[2]) {
+// `node seed-home.mjs <home>` for manual inspection. Guard on the module being the direct
+// entry point — a bare `if (process.argv[2])` would also fire when this module is IMPORTED
+// in a process that happens to have argv[2] (e.g. Playwright's `test` subcommand), seeding a
+// stray directory in the CWD.
+const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
+if (isMain && process.argv[2]) {
   const dir = seedHome(process.argv[2]);
   process.stdout.write(`seeded ${dir}\n`);
 }
