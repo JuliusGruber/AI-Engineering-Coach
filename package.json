@@ -114,7 +114,7 @@
     "serve": "node ./dist/standalone/cli.js",
     "dev:standalone": "node --watch ./dist/standalone/cli.js",
     "build:standalone": "node esbuild.mjs",
-    "test:integration:standalone": "vitest run tests/standalone/integration",
+    "test:integration:standalone": "vitest run --config tests/standalone/integration/vitest.config.ts",
     "test:playwright:standalone": "playwright test --config=tests/standalone/playwright/playwright.config.ts",
     "pack:check": "npm pack --dry-run",
     "coverage:standalone": "vitest run --config tests/standalone/coverage.config.ts"
