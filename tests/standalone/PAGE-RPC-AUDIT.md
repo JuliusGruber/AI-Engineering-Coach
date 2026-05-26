@@ -227,7 +227,7 @@ Router (src/webview/app.ts): `normalizePageForFeatureFlags` redirects `burndown 
 | patterns | getCalendarActivity | registry-allowlisted | works |
 | patterns | getProjectOverview | registry-allowlisted | works |
 | anti-patterns | getAntiPatterns | registry-allowlisted | works (primary data) |
-| anti-patterns | getRuleEditor | **banner-worthy** | **BROKEN** — bare `Promise.all` with no per-item fallback; rejection propagates; `withErrorBoundary` shows error div |
+| anti-patterns | getRuleEditor | **banner-worthy** | degraded — *was BROKEN* (bare `Promise.all`, no fallback); fixed by the shim's `RESOLVE_EMPTY_WHEN_DISABLED` neutralization (see §4); banner still fires |
 | skills | getWorkspaces | registry-allowlisted | works (initial render) |
 | skills | getWorkflowOptimization | registry-allowlisted | degraded (try/catch, button action) |
 | skills | triageSkills | silent-disabled | degraded (try/catch, button action) |
@@ -272,7 +272,7 @@ Router (src/webview/app.ts): `normalizePageForFeatureFlags` redirects `burndown 
 
 | Page ID | Method | Bucket | Renders? |
 |---------|--------|--------|----------|
-| rule-editor | getRuleEditor | **banner-worthy** | BROKEN — bare `rpc('getRuleEditor', …)` as primary data; rejects → withErrorBoundary shows error div |
+| rule-editor | getRuleEditor | **banner-worthy** | degraded — *was BROKEN* (routes through `renderAntiPatterns`, `app.ts:645`); fixed by the same shim neutralization (see §4) |
 | rule-playground | getFieldSchema | registry-allowlisted | works |
 | rule-playground | getFunctionCatalog | registry-allowlisted | works |
 | rule-playground | getMetricList | registry-allowlisted | works |
@@ -302,21 +302,21 @@ const [apData, ruleData] = await Promise.all([
 
 `getRuleEditor` is BANNER_WORTHY. In standalone, the dispatcher returns `{ ok: false, error: { code: 'standalone-v1-disabled', method: 'getRuleEditor' } }`. The server maps this to `{ type: 'response', id, data: { error: 'request failed (standalone-v1-disabled)', code, method } }`. The `rpc()` helper in `shared.ts:62` sees `msg.data.error` is truthy and **rejects** the promise. The bare `Promise.all` rejects. `renderAntiPatterns` throws. `withErrorBoundary` (app.ts:644) catches this and renders the error-fallback div: `"⚠️ Failed to render Anti-Patterns"`.
 
-The `anti-patterns` nav page renders BROKEN (error boundary), not merely degraded.
+The `anti-patterns` nav page rendered BROKEN (error boundary), not merely degraded.
 
-**The same applies to `rule-editor`** (deep-link-only), which calls `getRuleEditor` as its sole primary data source.
+**The same applied to `rule-editor`** (deep-link-only), which routes through the same `renderAntiPatterns` (`app.ts:645`).
 
-**Decision:** The expected outcome does NOT fully hold — `anti-patterns` renders BROKEN in standalone. This is documented as a reconciliation gap below.
+**Resolution (standalone-only, additive):** Because `app.ts`/`page-antipatterns.ts` are reused upstream files (additive-only fork rule forbids editing them), the fix lives in the standalone shim. `src/standalone/webview-shim.ts` now carries `RESOLVE_EMPTY_WHEN_DISABLED = { getRuleEditor }`: on an inbound `standalone-v1-disabled` frame for one of these methods, the shim forwards an **empty-data** frame (`{ type, id, data: {} }`) instead of the error frame, so `rpc()` (`shared.ts:62`, which rejects only when `data.error` is truthy) **resolves** with `{}`. `renderAntiPatterns`' `ruleData.rules || []` guards then render a degraded view (patterns table from the working `getAntiPatterns`; empty Rules tab) instead of throwing. The roadmap banner still fires (`getRuleEditor ∈ BANNER_WORTHY`). The other BANNER_WORTHY methods are user-action calls guarded by their own try/catch and intentionally keep rejecting, so no fake-success regression is introduced. Verified by `webview-shim.test.ts` and the Task 8 smoke test.
+
+**Decision:** With the shim fix in place, the expected outcome holds — all 10 nav pages degrade gracefully.
 
 ---
 
 ## 5  Conclusion
 
-**9 of 10 nav pages degrade gracefully** in standalone: `dashboard`, `timeline`, `image-gallery`, `output`, `burndown` (FF-gated/redirected), `patterns`, `skills`, `config-health`, `level-up`.
+**All 10 nav pages degrade gracefully** in standalone: `dashboard`, `timeline`, `image-gallery`, `output`, `burndown` (FF-gated/redirected), `patterns`, `anti-patterns` (via the shim fix in §4), `skills`, `config-health`, `level-up`. **No nav entry dropped.**
 
-**1 nav page renders BROKEN:** `anti-patterns` — because `getRuleEditor` (BANNER_WORTHY) is called in a bare `Promise.all` with no per-item fallback in `renderAntiPatterns`; the rejection propagates and `withErrorBoundary` shows the error div.
-
-**The claim "all 10 nav pages degrade gracefully — no nav entry dropped" does NOT hold without a fix.** A BANNER_WORTHY call needs to be wrapped with a fallback (e.g., `rpc('getRuleEditor', …).catch(() => ({ rules: [], previews: [], layers: [], pending: [], dateHistograms: {} }))`) to allow the anti-patterns patterns table to still render when the rule-editor data is unavailable.
+The only page that did not initially degrade — `anti-patterns` (and the `rule-editor` route that reuses its render) — was resolved by the standalone shim's `RESOLVE_EMPTY_WHEN_DISABLED` neutralization of disabled `getRuleEditor`, keeping the fork additive-only (no upstream edit).
 
 ---
 
@@ -349,7 +349,7 @@ installSkill, installCatalogItem, triageCatalog, getRuleEditor
 - All 10 BANNER_WORTHY methods are accounted for.
 - `createSkill` has no call site in any `page-*.ts` file (it may be reserved for a future page or removed from use). It is correctly listed in BANNER_WORTHY as a forward declaration.
 - No discovered banner-worthy method is missing from BANNER_WORTHY — **zero BANNER_WORTHY gaps**.
-- **One discrepancy in the other direction:** `getRuleEditor` is BANNER_WORTHY and is also called in a bare `Promise.all` in both `page-antipatterns.ts` and `page-rule-editor.ts` without a fallback. The banner fires (shim detects `standalone-v1-disabled` + `BANNER_WORTHY`), but the page also crashes into the error boundary. The UX contract (banner shown, section disabled) is partially met (banner fires) but the page render is broken rather than degraded.
+- **One discrepancy in the other direction (now resolved):** `getRuleEditor` is BANNER_WORTHY and is awaited as primary render data in a bare `Promise.all` (`page-antipatterns.ts`; the `rule-editor` route reuses `renderAntiPatterns`). Without a fix the banner fired but the page also crashed into the error boundary. The standalone shim now lists `getRuleEditor` in `RESOLVE_EMPTY_WHEN_DISABLED` and forwards an empty-data frame so `rpc()` resolves — the banner fires AND the page degrades. UX contract (banner shown, section disabled, page navigable) fully met. See §4.
 
 ---
 
@@ -358,11 +358,11 @@ installSkill, installCatalogItem, triageCatalog, getRuleEditor
 | Metric | Count |
 |--------|-------|
 | Nav pages audited | 10 |
-| Nav pages: works/degraded | 9 |
-| Nav pages: BROKEN | 1 (`anti-patterns`) |
+| Nav pages: works/degraded | 10 (`anti-patterns` via shim fix, §4) |
+| Nav pages: BROKEN | 0 (`anti-patterns` was broken; fixed in shim) |
 | Deep-link routes audited | 3 (`rule-editor`, `rule-playground`, `data-explorer`) |
-| Deep-link routes: works/degraded | 2 |
-| Deep-link routes: BROKEN | 1 (`rule-editor`) |
+| Deep-link routes: works/degraded | 3 (`rule-editor` via shim fix, §4) |
+| Deep-link routes: BROKEN | 0 (`rule-editor` was broken; fixed in shim) |
 | Distinct methods discovered | 48 |
 | registry-allowlisted | 36 |
 | banner-worthy (called in pages) | 9 of 10 (createSkill has no call site) |

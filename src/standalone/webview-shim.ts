@@ -23,6 +23,16 @@ export const BANNER_WORTHY: ReadonlySet<string> = new Set([
   'triageCatalog', 'getRuleEditor',
 ]);
 
+// Disabled methods a page awaits as PRIMARY render data with no per-call fallback. A
+// disabled response makes rpc() (shared.ts) reject, and these rejections are NOT caught at
+// the call site, so they crash the whole page render into withErrorBoundary instead of
+// degrading. getRuleEditor is awaited in renderAntiPatterns' bare Promise.all
+// (page-antipatterns.ts) and is the rule-editor route's sole data source. For these the
+// shim forwards an empty-data frame so rpc() resolves and the page degrades gracefully.
+// The other BANNER_WORTHY methods are user-action calls guarded by their own try/catch and
+// MUST keep rejecting — resolving them to empty would fake a successful action.
+export const RESOLVE_EMPTY_WHEN_DISABLED: ReadonlySet<string> = new Set(['getRuleEditor']);
+
 export function installShim(): void {
   const token =
     document.querySelector('meta[name="coach-token"]')?.getAttribute('content') ?? '';
@@ -93,10 +103,18 @@ export function installShim(): void {
         console.warn('[coach] bad frame', e);
         return;
       }
-      // Banner decision lives here — the shim is the only place that sees every frame.
-      const f = frame as { type?: string; data?: { code?: string; method?: string } };
-      if (f.data?.code === 'standalone-v1-disabled' && BANNER_WORTHY.has(f.data.method ?? '')) {
-        showRoadmapBanner();
+      // Banner + degradation decisions live here — the shim is the only place that sees
+      // every frame.
+      const f = frame as { type?: string; id?: unknown; data?: { code?: string; method?: string } };
+      if (f.data?.code === 'standalone-v1-disabled') {
+        const method = f.data.method ?? '';
+        if (BANNER_WORTHY.has(method)) showRoadmapBanner();
+        if (RESOLVE_EMPTY_WHEN_DISABLED.has(method)) {
+          // Forward empty data (no error) so rpc() resolves instead of rejecting; the page's
+          // `ruleData.rules || []` guards then render a degraded view rather than throwing.
+          window.postMessage({ type: f.type, id: f.id, data: {} }, '*');
+          return;
+        }
       }
       window.postMessage(frame, '*'); // always forward; page handles data.error + onDataReady
       // app.ts has no hash router and onDataReady (just queued via postMessage above)
