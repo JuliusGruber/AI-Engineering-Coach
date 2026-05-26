@@ -13,14 +13,14 @@ Analyze your AI coding assistant usage — any harness, one dashboard.
 <br>
 
 <p align="center">
-  
-https://github.com/user-attachments/assets/9f0239bf-20e0-459f-b137-17cce0edd1b2
-
+  <img src="assets/hero.png" alt="AI Engineer Coach standalone dashboard" width="820">
 </p>
 
 ---
 
 ## What it does
+
+A fork of [microsoft/AI-Engineering-Coach](https://github.com/microsoft/AI-Engineering-Coach) that adds a **standalone browser UI** — the same dashboard runs as a local web app (`npm run serve`), no VS Code required.
 
 AI Engineer Coach reads your local AI session logs and turns them into actionable insights — no data leaves your machine.
 
