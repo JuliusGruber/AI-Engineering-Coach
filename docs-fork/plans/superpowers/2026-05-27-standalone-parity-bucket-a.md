@@ -942,4 +942,68 @@ git commit -m "docs(standalone): mark bucket A shipped + document the token over
 - **Integration `{ ok: true }` nuance:** the design says the integration test asserts `{ ok: true }`. Because the CLI serves before parse completes, the test first awaits the `dataReady` frame (after which `cli.ts:121` `setData` has run), then asserts the gate is passed (`code !== 'standalone-v1-disabled'`) **and** the handler returned data (no `error` field). This is the deterministic form of "ok"; full rendering with seeded data is the smoke's job (the design's load-bearing end-to-end check).
 - **Type consistency:** `resolveStandaloneWebviewRoot` (Task 7) is named identically in server.ts, its test, and 07-build.md. `makeConstantsRedirectPlugin` is named identically across its definition and both build sites. The injected page IDs `data-explorer`/`rule-playground` match `app.ts:649-650` and the nav `data-page` attributes.
 - **Snapshot regenerates twice** (Task 2 end, Task 8 end) because both streams change the rendered HTML; each regen is from a known green state with an eyeballed diff. This is expected when executing one plan top-to-bottom (the design's "avoid double regen" warning was about parallel streams).
+
+---
+
+## EXECUTION STATUS — paused 2026-05-27 (session 2; resume here)
+
+**Branch:** working directly on `main` (user opted out of a worktree).
+
+### Committed (green)
+- **Task 1** ✅ `942c0d2` — allowlist `getDataExplorer` + `evaluateExpression` (42). Test passes (5).
+- **Task 2** ✅ `cb04841` — Transform 3 Explore nav injection + snapshot regen. Test passes (17).
+- **Task 3** ✅ `a09172f` — integration test for the two new methods. Passes against the built CLI.
+- **Task R** ✅ `cda8485` — warm-server dataReady race fix in `webview-shim.ts` (`forwardDataReady`/`deliverDataReady`, defer to `DOMContentLoaded` when `readyState==='loading'`). The previously-failing 24th shim test was fixed (removed the premature `vi.advanceTimersByTime(1)`). `webview-shim.test.ts` = **24 passed**.
+- **Task 4** ✅ `1d43c39` — smoke NAV additions (`data-explorer`,`rule-playground`) + eval-REPL test. (At the time of commit the smoke was 15/15 green under FF=false bundle.)
+- **Task 5** ✅ `6dd4e3f` — `standalone-constants.ts` wrapper (FF override target). Test passes (2).
+- **Task 6** ✅ `18e4ca5` — esbuild `makeConstantsRedirectPlugin()` + second webview bundle `dist/standalone/webview/app.js` + plugin on CLI build + watch (`ctx6`). Build verified: standalone bundle has `FF_TOKEN_REPORTING_ENABLED = true`, shared bundle `= false` (grepped the built bundles directly — the Task-6-Step-5 file-hash check is weak because `sourcemap:true` vs `false` alone makes them differ).
+- **Task 7** ✅ `0e16cb7` — `resolveStandaloneWebviewRoot()` + `/dist/standalone/webview` static route. server.test.ts = 19 passed.
+- **Task 8** ✅ `3334486` — Transform 2 replacement → `/dist/standalone/webview/app.js`; FF mock added to `standalone-html.test.ts` (17 passed) + `standalone-html.snapshot.test.ts` (regenerated). Snapshot diff was EXACTLY the two expected changes (burndown `<li>` + script src).
+- **Task 9** ✅ `aeff6c9` — integration proof the CLI bundle enables token reporting (`getBurndown`/`getTokenCoverage` not the disabled sentinel). Passes against the built CLI.
+
+### In progress / NOT committed
+- **Task 10** (rewrite smoke for FF=true): edits **done but uncommitted** in `tests/standalone/playwright/smoke.spec.ts`:
+  - NAV comment rewritten for FF=true; `activeId` helper removed; `activeLink(id)` now uses `id` directly.
+  - Added `output page shows the Token Usage tab` test and `burndown page renders end-to-end` test.
+  - **Status:** 16/17 smoke tests pass. The **`burndown render` test PASSES** (proves the served standalone bundle is genuinely FF=true: burndown nav present, real data, no "temporarily disabled"). The **Output Token-Usage-tab test FAILS** — but see Task R2; it is a render race, NOT a wrong selector. **Do not commit Task 10 until the smoke is green.**
+
+### ⛔ NEW BLOCKER — Task R2: warm-suite double-render race crashes `renderOutput`
+
+**Symptom:** `output page shows the Token Usage tab` fails ONLY inside the full smoke suite (it is test #16, warm server). Run **alone** (`-g "Token Usage tab"`) it **PASSES**. So the FF=true bundle renders the `button[data-tab="token-usage"]` correctly; the suite-position is the variable.
+
+**Root cause (fully diagnosed this session, evidence-based — not a guess):**
+- The Output page hits the `withErrorBoundary('Output', …)` fallback ("⚠️ Failed to render Output") with message **`Cannot read properties of null (reading 'addEventListener')`**. Confirmed by reading the Playwright `error-context.md` DOM snapshot AND by temporarily instrumenting `shared.ts`' `showErrorFallback` to log the stack.
+- Stack maps to **`page-output.ts:746`** → `document.getElementById('outputRange')!.addEventListener('click', …)` returning **null** (bundle `app.js:16520`, verified by `sed` on the built bundle). `#outputRange` is rendered synchronously at `page-output.ts:235`, then `renderOutput` `await`s `renderActiveTab()`→`getCodeProduction` at line **712**, then wires `#outputRange`/`#output-tabs` at lines **746/760**.
+- **Mechanism — two concurrent async page renders clobber `main#content`.** Temporary `renderPage()` instrumentation in `app.ts` logged the exact sequence for the failing test:
+  - `[nav] dashboard` @ t≈90ms — `onDataReady` (`app.ts:444 navigateTo(currentPage)`, default `currentPage='dashboard'`) starts `renderDashboard` (async, awaits RPCs).
+  - `[nav] output` @ t≈94ms — the shim's `navFromHash` (`setTimeout(navFromHash,0)` in `forwardDataReady`) clicks `[data-page=output]` → `renderPage('output')` → `content.textContent=''` (`app.ts:629`), renders the Output tab-bar (`#outputRange` now present), then `await`s `getCodeProduction`.
+  - The in-flight **`renderDashboard` RPC resolves DURING `renderOutput`'s await** and writes into the **same** `main#content`, wiping `#outputRange`.
+  - `renderOutput` resumes at line 746 → `getElementById('outputRange')` is null → throws → boundary → no tab-bar → no token-usage button.
+- This is the SAME class as Task R (shim drives navigation while app.js races) but a **different leg**: Task R fixed the *inbound* deliver-before-listener drop; R2 is the shim's "post `dataReady` (→ app renders default page) THEN `navFromHash` (→ deep-link page)" producing **two overlapping async renders** into one container. It is FF-independent in principle (FF=false Output also awaits `getCodeProduction`), but only surfaces now because (a) test #16 is warm enough for the RPC timings to align, and (b) the new token-tab test strictly requires a *successful* render (a crashed Output still satisfied the old NAV `#output` checks — see "blind spot" below).
+
+**Constraint:** the crash site (`page-output.ts`, `app.ts`, `shared.ts`) is **upstream — NOT editable** (additive-only invariant: only `src/standalone/` may change). So the fix must live in **`src/standalone/webview-shim.ts`**: make the deep-link navigation the *sole/last* render so no in-flight default-page render clobbers it. Candidate directions (NOT yet implemented — pick after a quick check of `onDataReady`):
+  1. **Suppress the wasteful default render**: have the shim navigate to the hash page such that app.ts's `onDataReady`→`navigateTo(currentPage)` already targets the deep-link page (e.g. drive `navFromHash` so `currentPage` is the hash page *before* `onDataReady` runs), yielding one page identity (still verify no double-render of that same page races — `renderPage` clears `content` then async-renders, so even same-page double nav has a small null window).
+  2. **Serialize**: defer `navFromHash` until the default render has *settled* (not just `setTimeout 0`). The shim can't await app.ts's async render, so this needs a robust signal (e.g. observe `#content` stops mutating / loading-spinner gone) — fragile; prefer (1).
+  3. Reconsider whether `forwardDataReady` should post `dataReady` at all before the hash is applied.
+  Whatever the fix: add failing-first tests in `src/standalone/__tests__/webview-shim.test.ts` (simulate `onDataReady`→default-nav followed by `navFromHash`, assert only one surviving navigation / no clobber), then verify the full smoke goes 17/17. Suggested commit msg: `fix(standalone): single deep-link render on warm connect (renderOutput clobber race)`.
+
+**`#output` NAV-test blind spot (worth a follow-up, low priority):** the per-page NAV loop asserts `main#content > * count > 0` + no console errors. A crashed render still satisfies BOTH (the error-boundary `<div>` is a child, and `shared.ts`' `showErrorFallback` does **not** `console.error`). So the NAV `#output` test silently passes on a crashed Output page. Consider asserting absence of `.error-boundary` in the NAV loop. (Out of plan; note only.)
+
+### Debug instrumentation — REVERTED (verify clean before resuming)
+This session temporarily instrumented `src/webview/render.ts`, `src/webview/shared.ts`, `src/webview/app.ts` (console logs) and `tests/standalone/playwright/smoke.spec.ts` (page-console capture to `.debug.log`). **All reverted.** Verified: `git diff --name-only -- src/ | grep -v '^src/standalone/'` is **empty** and `git diff --name-only abc0a6c -- src/ | grep -v '^src/standalone/'` is **empty** (invariant holds). The built `dist/standalone/webview/app.js` may still carry stale instrumentation — **`npm run build` before re-testing.**
+
+### Resume checklist (in order)
+1. Confirm clean tree: upstream `src/` diff empty (see above). `npm run build`.
+2. **Fix Task R2** in `src/standalone/webview-shim.ts` (candidate (1) above). Add failing-first shim unit tests; `npx vitest run src/standalone/__tests__/webview-shim.test.ts` green.
+3. `npm run build` → `npm run test:playwright:standalone` → expect **17/17** (read the summary line; `tail` masks exit code).
+4. Commit Task R2 (own message), then commit **Task 10** (smoke rewrite) with `test(standalone): rewrite smoke for FF=true (burndown, Token Usage tab)`.
+5. Do **Task 11** (docs + `pack:check` + `test:all` + final invariant). Use baseline `abc0a6c` for the invariant check, **not** `upstream/main` (drifted ~99 commits): `git diff --name-only abc0a6c -- src/ | grep -v '^src/standalone/'` must be empty.
+
+### Working-tree / repo notes (leave alone)
+- `tests/standalone/playwright/smoke.spec.ts` is the only uncommitted *code* change (Task 10 edits; debug already removed).
+- `.claude/scheduled_tasks.lock` — untracked `ScheduleWakeup` artifact; ignore.
+- Commit `9b9734e docs(plan): add bucket-D standalone-parity implementation plan` (top of log) is **not** from this execution and is unrelated (bucket D) — leave it.
+
+### Pre-existing unrelated test failures (full `test:all` only; not introduced here)
+`src/core/metric-engine.test.ts` and `src/core/parser-codex.test.ts` (64 s file-cap timeout) fail on a clean tree too — both upstream `src/core/`, outside this plan's scope. A `-u` snapshot run this session swept the whole suite and showed exactly these 2 failing (1142 passed); the standalone files this plan touches are all green.
 ```
