@@ -8,11 +8,10 @@ const { origin, token } = JSON.parse(
   fs.readFileSync(path.join(__dirname, '.runtime.json'), 'utf8'),
 ) as { origin: string; token: string };
 
-// The 10 real nav page ids. The shim's hash bridge (04-webview-shim Task 5) selects the
-// page from `#<id>` after dataReady; navigateTo toggles `active` on the matching nav link
-// (app.ts:466). burndown's nav <li> is not emitted while FF_TOKEN_REPORTING_ENABLED is
-// false (panel-html.ts:34) and navigateTo('burndown') normalizes to 'dashboard'
-// (app.ts:26-29), so its active link is dashboard.
+// The 12 real nav page ids. The shim's hash bridge (04-webview-shim Task 5) selects the page
+// from `#<id>` after dataReady; navigateTo toggles `active` on the matching nav link (app.ts:466).
+// The standalone bundle ships FF_TOKEN_REPORTING_ENABLED=true (esbuild constants redirect), so
+// burndown's nav <li> IS emitted and navigateTo('burndown') is no longer normalized to dashboard.
 const NAV = [
   'dashboard', 'timeline', 'image-gallery', 'output', 'burndown',
   'patterns', 'anti-patterns', 'skills', 'config-health', 'level-up',
@@ -20,9 +19,8 @@ const NAV = [
 ];
 
 const pageUrl = (id: string): string => `${origin}/?t=${token}#${id}`;
-// The nav link expected to be `active` once the page rendered (burndown → dashboard).
-const activeId = (id: string): string => (id === 'burndown' ? 'dashboard' : id);
-const activeLink = (id: string): string => `.nav-links a[data-page="${activeId(id)}"]`;
+// FF=true: every page (including burndown) owns its own active nav link.
+const activeLink = (id: string): string => `.nav-links a[data-page="${id}"]`;
 
 for (const id of NAV) {
   test(`#${id} renders the right page with zero console errors`, async ({ page }) => {
@@ -76,4 +74,24 @@ test('rule playground eval REPL returns a result for a sample expression', async
   await expect(page.locator('#playground-results')).not.toContainText(
     'Write an expression and click Run', { timeout: 10_000 },
   );
+});
+
+test('output page shows the Token Usage tab (token reporting enabled in standalone)', async ({ page }) => {
+  await page.goto(pageUrl('output'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="output"]')).toHaveClass(/active/, { timeout: 15_000 });
+  // The token-usage tab button is rendered only when FF_TOKEN_REPORTING_ENABLED is true.
+  await expect(page.locator('button[data-tab="token-usage"]')).toBeVisible({ timeout: 10_000 });
+});
+
+test('burndown page renders end-to-end (override active, not the disabled banner)', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(pageUrl('burndown'), { waitUntil: 'load' });
+  // burndown now owns its own active nav link (no redirect to dashboard).
+  await expect(page.locator('.nav-links a[data-page="burndown"]')).toHaveClass(/active/, { timeout: 15_000 });
+  await expect.poll(() => page.locator('main#content > *').count(), { timeout: 15_000 }).toBeGreaterThan(0);
+  // Server returned real burndown data, so the FF=false gated notice is absent.
+  await expect(page.locator('main#content')).not.toContainText('temporarily disabled');
+  expect(errors, `console errors on #burndown:\n${errors.join('\n')}`).toEqual([]);
 });
