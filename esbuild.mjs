@@ -9,6 +9,45 @@ import * as path from 'path';
 
 const isWatch = process.argv.includes('--watch');
 
+// --- Standalone-only FF_TOKEN_REPORTING_ENABLED override (see docs-fork/specs/07-build.md) ---
+// Redirect every import that RESOLVES to src/core/constants.ts -> src/standalone/
+// standalone-constants.ts (re-exports core + flips the flag), but ONLY inside the
+// builds this plugin is attached to (standalone CLI + standalone webview). Keyed on
+// the resolved absolute path so it catches every relative spelling uniformly — the
+// reason `alias` (specifier-keyed) can't do this. New instance per build so each
+// build independently asserts >=1 redirect.
+function makeConstantsRedirectPlugin() {
+  const realConstants = path.resolve('src', 'core', 'constants.ts');
+  const standaloneConstants = path.resolve('src', 'standalone', 'standalone-constants.ts');
+  return {
+    name: 'standalone-constants-redirect',
+    setup(build) {
+      let redirects = 0;
+      build.onResolve({ filter: /constants$/ }, (args) => {
+        // standalone-constants.ts's own `export * from '../core/constants'` must reach
+        // the REAL module — break recursion here (compare OS-native absolute paths).
+        if (path.resolve(args.importer) === standaloneConstants) return undefined;
+        // Manual resolution (NOT build.resolve(), which would re-enter onResolve).
+        const resolved = path.resolve(args.resolveDir, args.path);
+        if (resolved === realConstants || `${resolved}.ts` === realConstants) {
+          redirects++;
+          return { path: standaloneConstants };
+        }
+        return undefined;
+      });
+      build.onEnd(() => {
+        if (redirects === 0) {
+          throw new Error(
+            'standalone-constants-redirect: 0 redirects. src/core/constants.ts was ' +
+              'renamed/moved or its import spelling changed; the standalone bundle would ' +
+              'ship FF_TOKEN_REPORTING_ENABLED=false and re-disable burndown. Fix the plugin target.',
+          );
+        }
+      });
+    },
+  };
+}
+
 // Bundle the extension host
 const extensionBuild = esbuild.build({
   entryPoints: ['src/extension.ts'],
@@ -149,6 +188,7 @@ await Promise.all([
       // to the stub so the bundle never require()s a real 'vscode' at runtime.
       vscode: './src/standalone/vscode-stub.ts',
     },
+    plugins: [makeConstantsRedirectPlugin()],
     // cli.ts only EXPORTS runCli; this runs it when the bundle is the entry module,
     // so `node dist/standalone/cli.js --version` works. bin/coach require()s the
     // bundle (require.main !== module), so it is NOT double-invoked there.
@@ -175,6 +215,22 @@ await Promise.all([
     bundle: true,
     sourcemap: false,
     minify: false,
+    logLevel: 'info',
+  }),
+  // Standalone webview bundle: a SECOND copy of src/webview/app.ts with the constants
+  // redirect, so the CLIENT reads FF_TOKEN_REPORTING_ENABLED=true (keeps the burndown
+  // route/nav, renders the Output "Token Usage" tab, drops the dashboard hidden banner).
+  // The shared dist/webview/app.js stays FF=false for the published extension.
+  // sourcemap:false matches the sibling dist/standalone/ bundles.
+  esbuild.build({
+    entryPoints: ['src/webview/app.ts'],
+    outfile: 'dist/standalone/webview/app.js',
+    platform: 'browser',
+    target: 'es2022',
+    format: 'iife',
+    bundle: true,
+    sourcemap: false,
+    plugins: [makeConstantsRedirectPlugin()],
     logLevel: 'info',
   }),
   // 3-5) The three core Worker scripts the CLI bundle spawns by __dirname-relative
@@ -286,7 +342,17 @@ if (isWatch) {
     outfile: 'dist/webview/app.js',
     sourcemap: true,
   });
-  await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch()]);
+  const ctx6 = await esbuild.context({
+    entryPoints: ['src/webview/app.ts'],
+    outfile: 'dist/standalone/webview/app.js',
+    platform: 'browser',
+    target: 'es2022',
+    format: 'iife',
+    bundle: true,
+    sourcemap: false,
+    plugins: [makeConstantsRedirectPlugin()],
+  });
+  await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch()]);
   for (const source of cssSources) {
     fs.watch(source, () => {
       try {
