@@ -961,11 +961,11 @@ git commit -m "docs(standalone): mark bucket A shipped + document the token over
 - **Task 8** ✅ `3334486` — Transform 2 replacement → `/dist/standalone/webview/app.js`; FF mock added to `standalone-html.test.ts` (17 passed) + `standalone-html.snapshot.test.ts` (regenerated). Snapshot diff was EXACTLY the two expected changes (burndown `<li>` + script src).
 - **Task 9** ✅ `aeff6c9` — integration proof the CLI bundle enables token reporting (`getBurndown`/`getTokenCoverage` not the disabled sentinel). Passes against the built CLI.
 
-### In progress / NOT committed
-- **Task 10** (rewrite smoke for FF=true): edits **done but uncommitted** in `tests/standalone/playwright/smoke.spec.ts`:
+### In progress — committed as WIP (smoke is RED)
+- **Task 10** (rewrite smoke for FF=true): edits committed as **WIP `9031386`** in `tests/standalone/playwright/smoke.spec.ts`:
   - NAV comment rewritten for FF=true; `activeId` helper removed; `activeLink(id)` now uses `id` directly.
   - Added `output page shows the Token Usage tab` test and `burndown page renders end-to-end` test.
-  - **Status:** 16/17 smoke tests pass. The **`burndown render` test PASSES** (proves the served standalone bundle is genuinely FF=true: burndown nav present, real data, no "temporarily disabled"). The **Output Token-Usage-tab test FAILS** — but see Task R2; it is a render race, NOT a wrong selector. **Do not commit Task 10 until the smoke is green.**
+  - **Status:** 16/17 smoke tests pass on `9031386`. The **`burndown render` test PASSES** (proves the served standalone bundle is genuinely FF=true: burndown nav present, real data, no "temporarily disabled"). The **Output Token-Usage-tab test FAILS** — but see Task R2; it is a render race, NOT a wrong selector. This WIP commit is **intentionally red on `main`** — the next session lands the Task R2 fix and turns the suite green; the Task-10 test edits are already on disk/in history, so no re-typing.
 
 ### ⛔ NEW BLOCKER — Task R2: warm-suite double-render race crashes `renderOutput`
 
@@ -996,11 +996,11 @@ This session temporarily instrumented `src/webview/render.ts`, `src/webview/shar
 1. Confirm clean tree: upstream `src/` diff empty (see above). `npm run build`.
 2. **Fix Task R2** in `src/standalone/webview-shim.ts` (candidate (1) above). Add failing-first shim unit tests; `npx vitest run src/standalone/__tests__/webview-shim.test.ts` green.
 3. `npm run build` → `npm run test:playwright:standalone` → expect **17/17** (read the summary line; `tail` masks exit code).
-4. Commit Task R2 (own message), then commit **Task 10** (smoke rewrite) with `test(standalone): rewrite smoke for FF=true (burndown, Token Usage tab)`.
+4. Commit Task R2 (own message). Task 10's smoke edits are already in history (WIP `9031386`), so nothing to re-add — once R2 is green the suite is green at HEAD. (Optionally reword the `wip:` commit later, but not required.)
 5. Do **Task 11** (docs + `pack:check` + `test:all` + final invariant). Use baseline `abc0a6c` for the invariant check, **not** `upstream/main` (drifted ~99 commits): `git diff --name-only abc0a6c -- src/ | grep -v '^src/standalone/'` must be empty.
 
 ### Working-tree / repo notes (leave alone)
-- `tests/standalone/playwright/smoke.spec.ts` is the only uncommitted *code* change (Task 10 edits; debug already removed).
+- Working tree is otherwise clean — all code changes are committed (Task 10 as WIP `9031386`; debug instrumentation already reverted).
 - `.claude/scheduled_tasks.lock` — untracked `ScheduleWakeup` artifact; ignore.
 - Commit `9b9734e docs(plan): add bucket-D standalone-parity implementation plan` (top of log) is **not** from this execution and is unrelated (bucket D) — leave it.
 
