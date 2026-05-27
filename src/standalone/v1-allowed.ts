@@ -1,7 +1,9 @@
 // src/standalone/v1-allowed.ts
 // The authoritative v1 method allowlist (see docs-fork/specs/00-overview.md).
-// All 40 are read-only upstream getRpcHandler methods. getRuleEditor is
-// deliberately excluded (its handler calls require('vscode')).
+// 40 read-only getRpcHandler methods + 2 bucket-A additions (getDataExplorer,
+// evaluateExpression) = 42. getRuleEditor is deliberately excluded (its handler
+// calls require('vscode')); calibrateRule/runRuleTests are deferred (no exposed
+// page reaches them — see docs-fork/superpowers/spec bucket-A design).
 
 const _inner = new Set<string>([
   'getWorkspaces', 'getHarnesses', 'getHarnessBreakdown',
@@ -17,7 +19,7 @@ const _inner = new Set<string>([
   'getProjectOverview', 'getImageGallery', 'getSessionImages',
   'getRuleCoverage', 'getFieldSchema', 'getMetricPrimitives',
   'getFunctionCatalog', 'getMetricList', 'getDataExplorerFields',
-  'getRegistryCatalog',
+  'getRegistryCatalog', 'getDataExplorer', 'evaluateExpression',
 ]);
 
 function _throwMutation(): never {
