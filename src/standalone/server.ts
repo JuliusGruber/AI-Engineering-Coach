@@ -51,6 +51,9 @@ export function resolveProjectRoot(): string {
 export function resolveWebviewRoot(): string {
   return path.join(resolveProjectRoot(), 'dist', 'webview');
 }
+export function resolveStandaloneWebviewRoot(): string {
+  return path.join(resolveProjectRoot(), 'dist', 'standalone', 'webview');
+}
 export function resolveShimPath(): string {
   return path.join(resolveProjectRoot(), 'dist', 'standalone', 'standalone-shim.js');
 }
@@ -260,6 +263,7 @@ export async function createServer(opts: ServerOptions): Promise<ServerHandle> {
     res.sendFile(resolveShimPath());
   });
   app.use('/dist/webview', auth, express.static(resolveWebviewRoot()));
+  app.use('/dist/standalone/webview', auth, express.static(resolveStandaloneWebviewRoot()));
   app.get('/img', auth, createImageRoute());
 
   const httpServer = http.createServer(app);

@@ -18,7 +18,7 @@ vi.mock('os', async () => {
 vi.mock('../dispatcher', () => ({ dispatch: vi.fn() }));
 
 import * as net from 'net';
-import { createServer, probeExistingInstance, resolveShimPath, resolveWebviewRoot, type ServerHandle } from '../server';
+import { createServer, probeExistingInstance, resolveShimPath, resolveStandaloneWebviewRoot, resolveWebviewRoot, type ServerHandle } from '../server';
 import { readServerState, writeServerState } from '../state';
 import { WebSocket as WsClient } from 'ws';
 import { dispatch } from '../dispatcher';
@@ -135,6 +135,16 @@ async function start(): Promise<ServerHandle> {
 function origin(h: ServerHandle): string {
   return `http://127.0.0.1:${h.port}`;
 }
+
+describe('resolveStandaloneWebviewRoot', () => {
+  it('points at dist/standalone/webview under the project root', () => {
+    const root = resolveStandaloneWebviewRoot();
+    expect(root.endsWith(path.join('dist', 'standalone', 'webview'))).toBe(true);
+    // It is a sibling of the shared webview root, one level deeper under dist/standalone.
+    expect(root).toContain(path.join('dist', 'standalone'));
+    expect(resolveWebviewRoot().endsWith(path.join('dist', 'webview'))).toBe(true);
+  });
+});
 
 describe('HTTP routes', () => {
   it('serves /health without auth', async () => {
