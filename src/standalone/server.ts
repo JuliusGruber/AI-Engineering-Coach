@@ -293,14 +293,12 @@ export async function createServer(opts: ServerOptions): Promise<ServerHandle> {
   }
 
   let closePromise: Promise<void> | undefined;
-  const onSignal = (): void => {
-    void close();
-  };
+  // No process-level signal handlers here -- the CLI (installShutdownHandlers) owns the
+  // process lifecycle and calls close(). A SIGINT handler registered here would race the
+  // CLI's and swallow its 130/143 exit code. close() is idempotent via closePromise.
   function close(): Promise<void> {
     if (closePromise) return closePromise;
     closePromise = (async () => {
-      process.removeListener('SIGINT', onSignal);
-      process.removeListener('SIGTERM', onSignal);
       for (const socket of clients) {
         try {
           socket.close(1001);
@@ -323,8 +321,5 @@ export async function createServer(opts: ServerOptions): Promise<ServerHandle> {
     })();
     return closePromise;
   }
-  process.on('SIGINT', onSignal);
-  process.on('SIGTERM', onSignal);
-
   return { url: `http://${HOST}:${port}/?t=${token}`, port, token, setData, broadcast, close };
 }

@@ -100,6 +100,13 @@ export async function runCli(argv: string[]): Promise<number> {
 
   // Serve first -- the browser shows the loading shell while we parse.
   const handle = await createServer({ port: flags.port, token, logFile: flags.logFile ?? undefined });
+
+  // Install shutdown handlers BEFORE announcing readiness, so a SIGINT/SIGTERM at any
+  // point after the server is up -- including during the initial parse below -- closes
+  // gracefully and resolves 130/143. createServer no longer self-handles signals; the
+  // CLI owns the lifecycle so the exit code propagates out through bin/coach.
+  const shutdownCode = new Promise<number>((resolve) => installShutdownHandlers(handle, resolve));
+
   process.stderr.write(`coach running at ${handle.url}\n`);
   if (flags.open) {
     try {
@@ -113,7 +120,7 @@ export async function runCli(argv: string[]): Promise<number> {
   const { analyzer, parseResult } = await bootstrapParse((p) => handle.broadcast({ type: 'progress', ...p }));
   handle.setData(analyzer, parseResult);
 
-  return await new Promise<number>((resolve) => installShutdownHandlers(handle, resolve));
+  return await shutdownCode;
 }
 
 // SIGINT -> 130, SIGTERM -> 143 (128 + signal). Each handler removes both listeners
