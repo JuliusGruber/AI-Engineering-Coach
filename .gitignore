@@ -11,6 +11,7 @@ docs/ai-engineer-coach.pdf
 docs/security-audit.md
 .husky/pre-commit
 test-results/
+tests/standalone/playwright/.runtime.json
 README.github.md
 PROPOSED_FIXES.md
 local/
