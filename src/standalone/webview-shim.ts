@@ -57,6 +57,31 @@ export function installShim(): void {
     el.remove();
   }
 
+  // Forward a dataReady frame to app.ts, then re-apply the URL hash on the next task.
+  // app.ts has no hash router; onDataReady (queued via the postMessage) resets to
+  // 'dashboard', so the setTimeout(0) navFromHash runs after that task and lets a
+  // deep-link win. setTimeout(0) runs after the posted-message task in every browser.
+  function forwardDataReady(frame: unknown): void {
+    window.postMessage(frame, '*');
+    if (location.hash) setTimeout(navFromHash, 0);
+  }
+
+  // Warm-server race guard: the server pushes dataReady on connect (server.ts:182). If it
+  // arrives while app.js (the next classic <script>) is still fetching/executing, app.ts has
+  // not yet installed its window 'message' listener (shared.ts:57) or its [data-page] click
+  // delegation (app.ts:451), so an immediate forward is dropped and the page never renders or
+  // navigates (the smoke-suite race). Deliver only once app.js has executed: immediately when
+  // the document is already past parsing (readyState !== 'loading' ⇒ DOMContentLoaded has
+  // fired ⇒ all non-deferred scripts ran), else on DOMContentLoaded. Delivering exactly once
+  // avoids a double onDataReady; re-delivery would be idempotent anyway (server.ts:181).
+  function deliverDataReady(frame: unknown): void {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => forwardDataReady(frame), { once: true });
+    } else {
+      forwardDataReady(frame);
+    }
+  }
+
   function showRoadmapBanner(): void {
     const ID = 'coach-roadmap-banner';
     let banner = document.getElementById(ID);
@@ -116,11 +141,14 @@ export function installShim(): void {
           return;
         }
       }
-      window.postMessage(frame, '*'); // always forward; page handles data.error + onDataReady
-      // app.ts has no hash router and onDataReady (just queued via postMessage above)
-      // resets to 'dashboard'; re-apply the URL hash on the next task so a deep-link wins.
-      // setTimeout(0) runs after the posted-message task in every major browser.
-      if (f.type === 'dataReady' && location.hash) setTimeout(navFromHash, 0);
+      // dataReady is delivered through the warm-server race guard (may defer to
+      // DOMContentLoaded); all other frames forward immediately. The page handles
+      // data.error + onDataReady on receipt.
+      if (f.type === 'dataReady') {
+        deliverDataReady(frame);
+        return;
+      }
+      window.postMessage(frame, '*');
     });
     ws.addEventListener('close', () => {
       ws = null;

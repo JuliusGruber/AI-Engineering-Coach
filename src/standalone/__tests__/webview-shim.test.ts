@@ -382,3 +382,75 @@ describe('hash navigation bridge', () => {
     nav.stop();
   });
 });
+
+describe('warm-server dataReady race: defer delivery until app.js has executed', () => {
+  // Capture the data-page of any synthesized nav click (jsdom has no app.ts handler).
+  function captureNav(): { page: () => string | undefined; stop: () => void } {
+    let page: string | undefined;
+    const onClick = (e: Event): void => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-page]');
+      if (el) page = el.dataset.page;
+    };
+    document.addEventListener('click', onClick);
+    return { page: () => page, stop: () => document.removeEventListener('click', onClick) };
+  }
+
+  // Override document.readyState for one test, restoring the original descriptor after.
+  function withReadyState(get: () => DocumentReadyState, fn: () => void): void {
+    const own = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', { configurable: true, get });
+    try {
+      fn();
+    } finally {
+      if (own) Object.defineProperty(document, 'readyState', own);
+      else delete (document as unknown as { readyState?: unknown }).readyState;
+    }
+  }
+
+  it('buffers dataReady while the document is still loading, then delivers it on DOMContentLoaded', () => {
+    vi.useFakeTimers();
+    // Warm server (server.ts:182) pushes dataReady on connect. If it arrives before app.js
+    // (the next classic <script>) has executed, app.ts has not yet installed its window
+    // 'message' listener (shared.ts:57), so an immediate post would be dropped and the page
+    // would never render — the exact smoke-suite race. Simulate that with readyState=loading.
+    let state: DocumentReadyState = 'loading';
+    withReadyState(() => state, () => {
+      window.location.hash = '#skills';
+      installWithToken();
+      const nav = captureNav();
+      const ws = MockWebSocket.instances[0];
+      const frame = { type: 'dataReady', currentWorkspace: '' };
+
+      ws.message(JSON.stringify(frame));
+      // Must NOT have forwarded yet (app.ts isn't listening) and must NOT have navigated.
+      // Assert BEFORE advancing timers — a timer advance here would fire the stray
+      // hashchange queued by `location.hash = '#skills'` and navigate prematurely.
+      expect(window.postMessage).not.toHaveBeenCalledWith(frame, '*');
+      expect(nav.page()).toBeUndefined();
+
+      // Parsing completes → app.js has executed → app.ts is listening. Deliver now.
+      state = 'interactive';
+      document.dispatchEvent(new Event('DOMContentLoaded'));
+      expect(window.postMessage).toHaveBeenCalledWith(frame, '*');
+      vi.advanceTimersByTime(1); // fire the deferred navFromHash
+      expect(nav.page()).toBe('skills');
+      nav.stop();
+    });
+  });
+
+  it('delivers dataReady immediately when the document is already past loading (cold, no race)', () => {
+    vi.useFakeTimers();
+    // jsdom default readyState is 'complete' → app.ts already listening → forward at once.
+    window.location.hash = '#skills';
+    installWithToken();
+    const nav = captureNav();
+    const ws = MockWebSocket.instances[0];
+    const frame = { type: 'dataReady', currentWorkspace: '' };
+
+    ws.message(JSON.stringify(frame));
+    expect(window.postMessage).toHaveBeenCalledWith(frame, '*');
+    vi.advanceTimersByTime(1);
+    expect(nav.page()).toBe('skills');
+    nav.stop();
+  });
+});
