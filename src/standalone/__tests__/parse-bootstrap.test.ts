@@ -21,16 +21,25 @@ beforeEach(() => {
 });
 
 describe('bootstrapParse', () => {
-  it('returns an empty ParseResult without spawning a worker when no log dirs exist', async () => {
+  it('still runs the worker (for external-harness discovery) when no VS Code/Xcode dirs exist', async () => {
     mockedFindLogsDirs.mockReturnValue([]);
+    mockedParseViaWorker.mockResolvedValue({
+      workspaces: new Map(),
+      sessions: [],
+      editLocIndex: new Map(),
+      sessionSourceIndex: new Map(),
+    } as never);
 
     const { parseResult } = await bootstrapParse(() => {});
 
+    // findLogsDirs() only covers Copilot/Xcode; Claude/Codex/OpenCode are discovered
+    // inside the worker regardless of `dirs`, so the worker must run even on an empty
+    // list. Guards against the Copilot-less regression.
+    expect(mockedParseViaWorker).toHaveBeenCalledWith([], expect.any(Function));
     expect(parseResult.sessions).toEqual([]);
     expect(parseResult.workspaces.size).toBe(0);
     expect(parseResult.editLocIndex.size).toBe(0);
     expect(parseResult.sessionSourceIndex.size).toBe(0);
-    expect(mockedParseViaWorker).not.toHaveBeenCalled();
     // The Analyzer is still constructed (over empty data) so the dashboard renders.
     expect(MockedAnalyzer).toHaveBeenCalledOnce();
   });
