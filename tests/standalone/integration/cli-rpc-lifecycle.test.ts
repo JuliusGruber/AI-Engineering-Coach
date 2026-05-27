@@ -57,6 +57,19 @@ describe('cli rpc + lifecycle', () => {
     expect((ev.data as { total?: number }).total).toBeTypeOf('number'); // evaluateExpression result
   });
 
+  it('standalone bundle enables token reporting (getBurndown is not the disabled sentinel)', async () => {
+    const home = makeTmpHome();
+    const b = track(await bootCli(home, ['--port', '7361']), home);
+    const ws = await wsConnect(b);
+    await wsWaitFor(ws, 'dataReady');
+    const bd = await wsRequest(ws, 'getBurndown', {}, 'bd1');
+    const tc = await wsRequest(ws, 'getTokenCoverage', {}, 'tc1');
+    ws.close();
+    // FF override active in the built CLI bundle -> the false-branch sentinel is gone.
+    expect((bd.data as { error?: string }).error).not.toBe('Token reporting is temporarily disabled');
+    expect((tc.data as { error?: string }).error).not.toBe('Token reporting is temporarily disabled');
+  });
+
   it.runIf(process.platform === 'linux')(
     'runs native openExternal over WS before dataReady (fake xdg-open on PATH)',
     async () => {
