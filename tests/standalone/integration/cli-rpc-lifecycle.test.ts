@@ -4,7 +4,7 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { bootCli, makeTmpHome, stopCli, wsConnect, wsRequest, type Booted, CLI } from './helpers';
+import { bootCli, makeTmpHome, stopCli, wsConnect, wsRequest, wsWaitFor, type Booted, CLI } from './helpers';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -32,6 +32,29 @@ describe('cli rpc + lifecycle', () => {
     expect(typeof (res.data as { error: unknown }).error).toBe('string');
     expect((res.data as { error: string }).error.length).toBeGreaterThan(0);
     expect('error' in res).toBe(false); // never a sibling field
+  });
+
+  it('exposes getDataExplorer + evaluateExpression (bucket-A allowlist), returning data not the disabled gate', async () => {
+    const home = makeTmpHome();
+    const b = track(await bootCli(home, ['--port', '7360']), home);
+    const ws = await wsConnect(b);
+    await wsWaitFor(ws, 'dataReady'); // serve-then-parse: analyzer present after this frame
+
+    // getDataExplorerFields is already allowlisted; use it to get a valid field name.
+    const fieldsRes = await wsRequest(ws, 'getDataExplorerFields', {}, 'f1');
+    const fieldName = (fieldsRes.data as { fields: Array<{ name: string }> }).fields[0].name;
+
+    const de = await wsRequest(ws, 'getDataExplorer', { field: fieldName }, 'de1');
+    const ev = await wsRequest(ws, 'evaluateExpression', { expr: 'messageLength > 0', scope: 'requests' }, 'ev1');
+    ws.close();
+
+    // Before this change both returned { code: 'standalone-v1-disabled' } (tier-2 gate).
+    expect((de.data as { code?: string }).code).not.toBe('standalone-v1-disabled');
+    expect((ev.data as { code?: string }).code).not.toBe('standalone-v1-disabled');
+    // ...and they reached the real pure-core handler (ok shape: no error field).
+    expect((de.data as { error?: string }).error).toBeUndefined();
+    expect((ev.data as { error?: string }).error).toBeUndefined();
+    expect((ev.data as { total?: number }).total).toBeTypeOf('number'); // evaluateExpression result
   });
 
   it.runIf(process.platform === 'linux')(
