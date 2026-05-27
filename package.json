@@ -96,6 +96,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:all": "npm run build && npm run test && npm run test:integration:standalone && npm run test:e2e && npm run test:playwright:standalone",
     "analyze:data-inventory": "npx tsx scripts/data-inventory.ts",
     "analyze:token-inventory": "npx tsx scripts/token-inventory.ts --save",
     "analyze:context-composition": "npx tsx scripts/explore-context-composition.ts",
