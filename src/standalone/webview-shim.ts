@@ -117,10 +117,24 @@ export function installShim(): void {
         }
       }
       window.postMessage(frame, '*'); // always forward; page handles data.error + onDataReady
-      // app.ts has no hash router and onDataReady (just queued via postMessage above)
-      // resets to 'dashboard'; re-apply the URL hash on the next task so a deep-link wins.
-      // setTimeout(0) runs after the posted-message task in every major browser.
-      if (f.type === 'dataReady' && location.hash) setTimeout(navFromHash, 0);
+      if (f.type === 'dataReady') {
+        // app.ts has no hash router and onDataReady (just queued via postMessage above)
+        // resets to 'dashboard'; re-apply the URL hash on the next task so a deep-link wins.
+        // setTimeout(0) runs after the posted-message task in every major browser.
+        if (location.hash) setTimeout(navFromHash, 0);
+        // Startup race: the shim opens the WS (connect(), below) before app.js executes, and
+        // the server pushes dataReady on connect whenever data is already present — a warm
+        // reload, a second tab, or every test after globalSetup's seed parse. A dataReady
+        // posted before app.ts attaches its `message` listener (app.ts:444) is dropped and the
+        // page never renders. onDataReady is idempotent (server.ts), so while the document is
+        // still loading, re-deliver once on `load` — by then app.ts is listening.
+        if (document.readyState !== 'complete') {
+          window.addEventListener('load', () => {
+            window.postMessage(frame, '*');
+            if (location.hash) setTimeout(navFromHash, 0);
+          }, { once: true });
+        }
+      }
     });
     ws.addEventListener('close', () => {
       ws = null;

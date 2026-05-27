@@ -192,6 +192,63 @@ describe('inbound forwarding', () => {
   });
 });
 
+describe('dataReady delivery race', () => {
+  // Override document.readyState (a prototype getter in jsdom) per test; delete the
+  // own-property shadow afterwards so the real getter is restored.
+  function setReadyState(state: DocumentReadyState): void {
+    Object.defineProperty(document, 'readyState', { configurable: true, get: () => state });
+  }
+  afterEach(() => {
+    delete (document as unknown as { readyState?: unknown }).readyState;
+  });
+
+  const DATA_READY = { type: 'dataReady', currentWorkspace: '' };
+
+  it('re-delivers dataReady on window load when it arrived while the page was still loading', () => {
+    // The warm-server race: the shim opens the WS and the server pushes dataReady before
+    // app.ts has attached its `message` listener. The immediate post is missed; the shim
+    // must re-deliver once the page has loaded (app.ts is listening by then).
+    setReadyState('loading');
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+
+    ws.message(JSON.stringify(DATA_READY));
+    expect(window.postMessage).toHaveBeenCalledTimes(1); // immediate forward
+    expect(window.postMessage).toHaveBeenLastCalledWith(DATA_READY, '*');
+
+    window.dispatchEvent(new Event('load'));
+    expect(window.postMessage).toHaveBeenCalledTimes(2); // replayed for the late listener
+    expect(window.postMessage).toHaveBeenLastCalledWith(DATA_READY, '*');
+  });
+
+  it('does NOT re-deliver on load when the page had already finished loading (no race)', () => {
+    // readyState 'complete' → app.ts is guaranteed to be listening, so the immediate post
+    // suffices; a replay would trigger a redundant second render/RPC round-trip.
+    setReadyState('complete');
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+
+    ws.message(JSON.stringify(DATA_READY));
+    expect(window.postMessage).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event('load'));
+    expect(window.postMessage).toHaveBeenCalledTimes(1); // no replay
+  });
+
+  it('does not arm a load replay for ordinary response frames', () => {
+    setReadyState('loading');
+    installWithToken();
+    const ws = MockWebSocket.instances[0];
+    const response = { type: 'response', id: '1', data: { ok: 1 } };
+
+    ws.message(JSON.stringify(response));
+    expect(window.postMessage).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event('load'));
+    expect(window.postMessage).toHaveBeenCalledTimes(1); // only dataReady is replayed
+  });
+});
+
 describe('reconnect', () => {
   beforeEach(() => vi.useFakeTimers());
   // afterEach's vi.useRealTimers() (top-level) restores real timers.
