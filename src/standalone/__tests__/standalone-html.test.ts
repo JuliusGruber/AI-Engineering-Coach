@@ -125,3 +125,38 @@ describe('renderStandaloneHtml — whole-output properties', () => {
     expect(a).not.toContain('nonce'); // both nonce sites (CSP + script) were stripped
   });
 });
+
+describe('renderStandaloneHtml — Transform 3: injected Explore nav group', () => {
+  const html = renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' });
+  const occurrences = (needle: string): number => html.split(needle).length - 1;
+
+  it('adds the Explore group header exactly once', () => {
+    expect(occurrences('<li class="nav-group-header">Explore</li>')).toBe(1);
+  });
+
+  it('adds the Data Explorer and Rule Playground links exactly once each', () => {
+    expect(occurrences('data-page="data-explorer"')).toBe(1);
+    expect(occurrences('data-page="rule-playground"')).toBe(1);
+  });
+
+  it('injects the group after Level Up and before the nav </ul>', () => {
+    const levelUpAt = html.indexOf('data-page="level-up"');
+    const exploreAt = html.indexOf('<li class="nav-group-header">Explore</li>');
+    const ulCloseAt = html.indexOf('</ul>');
+    expect(levelUpAt).toBeGreaterThan(-1);
+    expect(levelUpAt).toBeLessThan(exploreAt);
+    expect(exploreAt).toBeLessThan(ulCloseAt);
+  });
+
+  it('throws if the level-up→</ul> nav boundary is missing (drift guard)', () => {
+    vi.spyOn(panelHtml, 'getDashboardHtml').mockReturnValue(
+      '<!DOCTYPE html><html><head>' +
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'">' +
+        '</head><body><main id="content"></main>' +
+        '<script nonce="x" src="/dist/webview/app.js"></script></body></html>',
+    );
+    expect(() => renderStandaloneHtml({ token: TOKEN, appVersion: '0.1.0' })).toThrow(
+      /expected exactly one level-up.*nav boundary, found 0/,
+    );
+  });
+});

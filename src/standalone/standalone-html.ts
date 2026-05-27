@@ -70,5 +70,22 @@ export function renderStandaloneHtml(opts: HtmlOptions): string {
     'app.js script tag',
   );
 
+  // Transform 3 (standalone-only nav parity): inject an "Explore" group with the two
+  // command-entrypoint pages after the last nav item (Level Up). Upstream renders no
+  // nav <li> for these deep-link-only routes; standalone has no command palette, so the
+  // nav link IS the entrypoint. Anchored on the level-up <li> immediately preceding the
+  // nav </ul>, so a reorder that moves Level Up off the end yields 0 matches and throws
+  // — same "fail loud on drift" contract as replaceOnce.
+  const exploreNav =
+    '\n      <li class="nav-group-header">Explore</li>' +
+    '\n      <li><a href="#" data-page="data-explorer"><span class="nav-icon">&#128269;</span> Data Explorer</a></li>' +
+    '\n      <li><a href="#" data-page="rule-playground"><span class="nav-icon">&#9881;</span> Rule Playground</a></li>';
+  const navBoundary = /(<a href="#" data-page="level-up"[\s\S]*?<\/a><\/li>)(\s*<\/ul>)/;
+  const navCount = (html.match(new RegExp(navBoundary, 'g')) ?? []).length;
+  if (navCount !== 1) {
+    throw new Error(`coach: expected exactly one level-up→</ul> nav boundary, found ${navCount}`);
+  }
+  html = html.replace(navBoundary, (_m, levelUpLi: string, ulClose: string) => `${levelUpLi}${exploreNav}${ulClose}`);
+
   return html;
 }
