@@ -5,6 +5,16 @@ import { renderStandaloneHtml } from '../standalone-html';
 
 const TOKEN = 'a'.repeat(64); // 64 hex chars
 
+// Standalone ships FF_TOKEN_REPORTING_ENABLED=true (esbuild constants redirect). Mock it
+// file-locally so panel-html (imported transitively) renders the burndown nav <li>, matching
+// the shipped standalone bundle. vitest keys module mocks on the resolved path, so panel-html's
+// own `import ... from '../core/constants'` is intercepted too. (Config-wide alias is wrong: it
+// would flip FF for every unit test in the repo — see docs-fork/superpowers/spec bucket-A design.)
+vi.mock('../../core/constants', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/constants')>();
+  return { ...actual, FF_TOKEN_REPORTING_ENABLED: true };
+});
+
 describe('renderStandaloneHtml — token validation', () => {
   it('throws on a non-hex / wrong-length token', () => {
     expect(() => renderStandaloneHtml({ token: 'bad', appVersion: '0.1.0' })).toThrow(
@@ -34,8 +44,8 @@ describe('renderStandaloneHtml — preserves the upstream body', () => {
     expect(html).toContain('href="/dist/webview/styles.css"');
   });
 
-  it('omits the burndown nav while FF_TOKEN_REPORTING_ENABLED is false', () => {
-    expect(html).not.toContain('data-page="burndown"');
+  it('emits the burndown nav <li> (standalone FF override is true)', () => {
+    expect(html).toContain('data-page="burndown"');
   });
 });
 
@@ -76,7 +86,7 @@ describe('renderStandaloneHtml — Transform 2: external scripts', () => {
 
   it('loads the external shim before app.js', () => {
     const shimAt = html.indexOf('<script src="/standalone-shim.js">');
-    const appAt = html.indexOf('<script src="/dist/webview/app.js">');
+    const appAt = html.indexOf('<script src="/dist/standalone/webview/app.js">');
     expect(shimAt).toBeGreaterThan(-1);
     expect(appAt).toBeGreaterThan(-1);
     expect(shimAt).toBeLessThan(appAt);
@@ -88,7 +98,7 @@ describe('renderStandaloneHtml — Transform 2: external scripts', () => {
     expect(scripts.every((s) => s.hasAttribute('src'))).toBe(true);
     expect(scripts.map((s) => s.getAttribute('src'))).toEqual([
       '/standalone-shim.js',
-      '/dist/webview/app.js',
+      '/dist/standalone/webview/app.js',
     ]);
   });
 

@@ -66,7 +66,7 @@ export function renderStandaloneHtml(opts: HtmlOptions): string {
   html = replaceOnce(
     html,
     /<script nonce="[^"]*" src="\/dist\/webview\/app\.js"><\/script>/,
-    `<script src="/standalone-shim.js"></script>\n<script src="/dist/webview/app.js"></script>`,
+    `<script src="/standalone-shim.js"></script>\n<script src="/dist/standalone/webview/app.js"></script>`,
     'app.js script tag',
   );
 

@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderStandaloneHtml } from '../standalone-html';
+
+vi.mock('../../core/constants', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/constants')>();
+  return { ...actual, FF_TOKEN_REPORTING_ENABLED: true };
+});
 
 // One whole-output snapshot. `renderStandaloneHtml` strips the per-call nonce, so a
 // fixed token yields byte-identical output — this pins the entire served document
