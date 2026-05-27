@@ -16,6 +16,7 @@ const { origin, token } = JSON.parse(
 const NAV = [
   'dashboard', 'timeline', 'image-gallery', 'output', 'burndown',
   'patterns', 'anti-patterns', 'skills', 'config-health', 'level-up',
+  'data-explorer', 'rule-playground',
 ];
 
 const pageUrl = (id: string): string => `${origin}/?t=${token}#${id}`;
@@ -64,4 +65,15 @@ test('dashboard does NOT show the roadmap banner on its proactive disabled calls
   // Let the proactive triageSkills/discoverCatalog/triageCatalog calls round-trip (silent-disabled).
   await page.waitForTimeout(1_500);
   await expect(page.locator('#coach-roadmap-banner')).toHaveCount(0);
+});
+
+test('rule playground eval REPL returns a result for a sample expression', async ({ page }) => {
+  await page.goto(pageUrl('rule-playground'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="rule-playground"]')).toHaveClass(/active/, { timeout: 15_000 });
+  await page.fill('#playground-expr', 'messageLength > 0');
+  await page.click('#playground-run');
+  // The results panel replaces its empty placeholder once evaluateExpression resolves.
+  await expect(page.locator('#playground-results')).not.toContainText(
+    'Write an expression and click Run', { timeout: 10_000 },
+  );
 });
