@@ -21,32 +21,27 @@ the blocker.
 
 ~18 gaps across 5 buckets.
 
-## A. Quick wins — allowlist/flag flips, no new infra
+## A. Quick wins — SHIPPED (2026-05-27)
 
-- **Data Explorer** — ad-hoc field distributions & filters. Only
-  `getDataExplorer` is off the allowlist (`getDataExplorerFields` is *on*); the
-  handler is pure-core (`panel-rpc.ts:1175`). **Easy** — add one method, plus a
-  nav link (Data Explorer is deep-link-only upstream — there's no nav item to
-  unhide).
-- **Burndown page** — monthly token-budget progress + projections.
-  `getBurndown` / `getAiCreditBurndown` are allowlisted, but gated by the
-  upstream feature flag `FF_TOKEN_REPORTING_ENABLED = false`
-  (`core/constants.ts:127`) — *not* the shim. The flag redirects
-  `burndown → dashboard` (`app.ts:27`), removes the nav link (`app.ts:32-34`,
-  `panel-html.ts:34`), and makes the handlers return `errorResult('Token
-  reporting is temporarily disabled')` (`panel-rpc.ts:641-649`). **Easy** —
-  flip the one flag (re-enables data + UI together).
-- **Output token breakdown** — per-model / language token volume.
-  `getTokenCoverage` is allowlisted but, like Burndown, gated by the same
-  `FF_TOKEN_REPORTING_ENABLED` flag: the handler returns "Token reporting is
-  temporarily disabled" (`panel-rpc.ts:650`) and the README marks the section
-  "temporarily hidden." **Easy** — same flag flip (the flag *is* the
-  data-quality hold).
-- **Rule Playground (eval)** — DSL REPL. Reference panels already work
-  (`getFieldSchema` / `getMetricPrimitives` / `getFunctionCatalog` /
-  `getMetricList` are allowlisted); only `evaluateExpression` /
-  `calibrateRule` / `runRuleTests` are gated (pure-core). **Easy–Med** —
-  `compileNlRule` (NL→rule) stays LLM (bucket D).
+All four exposed in the standalone build. Note: only two were genuinely
+"no new infra"; the token items required a standalone-only build override.
+
+- **Data Explorer** ✅ — `getDataExplorer` added to the allowlist (40 → 42) and a
+  nav link injected in `standalone-html.ts` (deep-link-only upstream). Pure-core,
+  no infra.
+- **Rule Playground (eval)** ✅ — `evaluateExpression` added to the allowlist and a
+  nav link injected (same "Explore" group). Pure-core. `compileNlRule` (NL→rule,
+  bucket D) and `saveRule` (bucket B) remain disabled and degrade gracefully.
+- **Burndown** ✅ — NOT an allowlist gap (its RPC methods were already allowlisted);
+  gated by `FF_TOKEN_REPORTING_ENABLED = false` in shared core. Exposed via a
+  **standalone-only** override: `src/standalone/standalone-constants.ts` re-exports
+  core constants with the flag flipped, and an esbuild `onResolve` plugin redirects
+  `core/constants` to it for the standalone CLI bundle + a new
+  `dist/standalone/webview/app.js`. The published extension stays FF=false. (So the
+  original "flip the one flag" framing was wrong — the flag is shared between the
+  extension and standalone via one bundle.)
+- **Output token breakdown** ✅ — same `FF_TOKEN_REPORTING_ENABLED` override; the
+  Output page now renders its "Token Usage" tab in standalone.
 
 ## B. Rule & skill authoring — needs a write path (v1 is read-only)
 

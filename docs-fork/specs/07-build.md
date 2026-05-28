@@ -315,3 +315,23 @@ no platform-specific work needed.
 | Build idempotency                      | CI step: run build twice, assert byte-identical `dist/standalone/cli.js` |
 
 No unit tests for this spec; it is configuration.
+
+## Standalone token-reporting override (bucket A)
+
+The standalone build ships `FF_TOKEN_REPORTING_ENABLED = true` without editing the
+shared `src/core/constants.ts`. Mechanism:
+
+- `src/standalone/standalone-constants.ts` — `export *` from `core/constants` plus a
+  local `export const FF_TOKEN_REPORTING_ENABLED = true` (ESM shadow).
+- `makeConstantsRedirectPlugin()` in `esbuild.mjs` — an `onResolve` plugin that
+  redirects any import resolving to the absolute `src/core/constants.ts` to the
+  wrapper. It matches on the **resolved absolute path** (not the specifier, so every
+  relative spelling is caught), skips the wrapper's own `export *` (recursion guard),
+  and throws in `onEnd` if it made zero redirects (loud failure on an upstream rename).
+- The plugin is attached to **two** builds: the standalone CLI bundle
+  (`dist/standalone/cli.js`, server-side handlers) and a **new** standalone webview
+  bundle `dist/standalone/webview/app.js` (browser/iife/es2022, `sourcemap:false`),
+  built from the shared `src/webview/app.ts`. Both must agree on FF=true.
+- The shared `dist/webview/app.js` and the published extension keep FF=false.
+  `files: ["dist/standalone/"]` ships the new bundle automatically; the server serves
+  it from `/dist/standalone/webview` and `standalone-html.ts` points its `<script>` there.

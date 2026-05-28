@@ -97,6 +97,10 @@ code --install-extension (Get-ChildItem . -Filter 'ai-engineer-coach-*.vsix' | S
 | **Burndown** | Monthly AI token budget progress with projections *(temporarily disabled)* |
 | **Patterns** | 7×24 activity heatmap and work-life balance signals |
 
+> **Standalone token reporting.** The standalone build enables the Burndown and Output
+> "Token Usage" views. Reported token numbers are derived from local transcripts and
+> **may not align with GitHub billing** — treat them as directional, not authoritative.
+
 ### Improve
 
 | Page | Description |
