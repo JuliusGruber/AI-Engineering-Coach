@@ -12,6 +12,23 @@
 
 ---
 
+## Execution status (handoff — read before continuing)
+
+> **Layer 1 is COMPLETE and committed to `main` (2026-05-28).** Next agent: start at **Task 4** (Layer 2). Layers 2 and 3 are untouched.
+>
+> **Commits landed (on `main`, in order):**
+> - `e2eb851` — Task 1: `feat(standalone): add llm-provider (Anthropic/OpenAI, non-streaming, env-detected)`
+> - `6456e59` — Task 2: `feat(standalone): implement vscode.lm in the stub (lights up panel-llm + rule-compiler)`
+> - Task 3 was verification-only (no commit): `npm run build` → `Build complete.` ✓
+>
+> **Test state at end of Layer 1:** `llm-provider.test.ts` 12/12, `vscode-stub.test.ts` 7/7, full `src/standalone/__tests__` suite 145 passed / 1 skipped (the 1 skip is pre-existing, unrelated).
+>
+> **Deviation from the literal Task 1 code — READ THIS (the committed `llm-provider.ts` differs from the Task 1 snippet):** the `OpenAiProvider.send` routes through the shared `postJson(...)` timeout helper (same as `AnthropicProvider`), **not** a bare `fetch`. The Task 1 snippet stored `this.timeoutMs` on the OpenAI class but never used it — a dead field that also left OpenAI's `callLlmJson` paths unbounded, contradicting grilling decision 4 ("the provider's `send()` owns its own ceiling … bounds all 13 paths"). The committed version applies the ceiling uniformly to both providers. No test behavior changed (every Task 1 + Task 2 test still passes). If you re-read Task 1's Step 3 snippet, treat the committed file as the source of truth for the OpenAI path.
+>
+> **Additive-only invariant — adjusted expectation (applies to Task 3 / Task 6 Step 4 / Task 14 Step 4):** `git diff --name-only abc0a6c -- src/ | grep -v '^src/standalone/'` does **NOT** print nothing — it prints exactly two files: `src/core/metric-engine.ts` and `src/core/parser-codex.test.ts`. These are **pre-existing**, from commit `44e9532` (`fix(core): pin calibration locale + bump codex large-file test timeout`), which predates this plan — confirmed by `git log abc0a6c..HEAD -- src/core/metric-engine.ts src/core/parser-codex.test.ts`. They are NOT introduced by bucket D and must NOT be reverted. The plan's "prints nothing" wording is therefore relaxed to: **"prints nothing except the two known pre-existing `src/core/` files above; no NEW file outside `src/standalone/` appears."** The correct guard for the next agent is to diff against the prior commit (`git diff --name-only <pre-task-commit>..HEAD -- src/ | grep -v '^src/standalone/'` must be empty), not against `abc0a6c`.
+
+---
+
 ## Grilling state (resolved decisions — folded into the tasks; recorded here as rationale)
 
 > A `/grill-me` session on 2026-05-28 stress-tested this plan (bucket A assumed done, landing in parallel). Six decisions were resolved and are now **folded into the task bodies below** (2026-05-28); the entries here remain as the decision record/rationale. Several were verified against the real code (recorded so the next agent need not re-check).
@@ -86,7 +103,7 @@
 
 # Layer 1 — Enabler (LLM provider + `vscode.lm` stub)
 
-## Task 1: Create the LLM provider client
+## Task 1: Create the LLM provider client — ✅ DONE (commit `e2eb851`; see Execution-status note re: OpenAI `postJson` deviation)
 
 **Files:**
 - Create: `src/standalone/llm-provider.ts`
@@ -427,7 +444,7 @@ git commit -m "feat(standalone): add llm-provider (Anthropic/OpenAI, non-streami
 
 ---
 
-## Task 2: Implement the `vscode.lm` surface in the stub
+## Task 2: Implement the `vscode.lm` surface in the stub — ✅ DONE (commit `6456e59`)
 
 **Files:**
 - Modify: `src/standalone/vscode-stub.ts`
@@ -660,7 +677,7 @@ git commit -m "feat(standalone): implement vscode.lm in the stub (lights up pane
 
 ---
 
-## Task 3: Layer 1 build + invariant check
+## Task 3: Layer 1 build + invariant check — ✅ DONE (verification only, no commit; build green, invariant verified per adjusted expectation above)
 
 **Files:** none (verification only)
 
@@ -1053,7 +1070,7 @@ git commit -m "test(standalone): smoke for Rule Playground NL->rule compile + Ru
 - [ ] **Step 4: Verify the Layer 2 additive-only invariant**
 
 Run: `git diff --name-only abc0a6c -- src/ | Select-String -NotMatch '^src/standalone/'`
-Expected: prints nothing. (The only Layer-2 `src/` change is `src/standalone/v1-allowed.ts` + its test; all other Layer-2 edits are under `tests/`.) If anything outside `src/standalone/` appears, stop and revert.
+Expected: prints **only** the two known pre-existing `src/core/` files (`src/core/metric-engine.ts`, `src/core/parser-codex.test.ts`; see the Execution-status handoff note at the top of this plan) — and **no other** file outside `src/standalone/`. (The only Layer-2 `src/` change is `src/standalone/v1-allowed.ts` + its test; all other Layer-2 edits are under `tests/`.) Sharper guard: `git diff --name-only <commit-before-this-task>..HEAD -- src/ | grep -v '^src/standalone/'` must be empty. If any NEW file outside `src/standalone/` appears, stop and revert.
 
 ---
 
@@ -2029,7 +2046,7 @@ Expected: build, unit (`vitest run`), standalone integration, e2e, and standalon
 - [ ] **Step 4: Final additive-only invariant verification**
 
 Run: `git diff --name-only abc0a6c -- src/ | Select-String -NotMatch '^src/standalone/'`
-Expected: prints nothing. Every `src/` change is under `src/standalone/`: new `llm-provider.ts`, `request-service-bridge.ts`, `v1-service-allowed.ts`, `llm-unavailable.ts`; modified `vscode-stub.ts`, `dispatcher.ts`, `v1-allowed.ts`, `server.ts`, `webview-shim.ts`; plus `src/standalone/__tests__/*`. `panel-llm.ts`, `core/rule-compiler.ts`, `panel-rpc.ts`, `panel-request-service.ts` are **unchanged**. Use baseline `abc0a6c`, not `upstream/main`. If any upstream `src/` file outside `src/standalone/` appears, stop and revert it.
+Expected: prints **only** the two known pre-existing `src/core/` files (`src/core/metric-engine.ts`, `src/core/parser-codex.test.ts`; from commit `44e9532`, predating this plan — see the Execution-status handoff note at the top) and **nothing else**. Every bucket-D `src/` change is under `src/standalone/`: new `llm-provider.ts`, `request-service-bridge.ts`, `v1-service-allowed.ts`, `llm-unavailable.ts`; modified `vscode-stub.ts`, `dispatcher.ts`, `v1-allowed.ts`, `server.ts`, `webview-shim.ts`; plus `src/standalone/__tests__/*`. `panel-llm.ts`, `core/rule-compiler.ts`, `panel-rpc.ts`, `panel-request-service.ts` are **unchanged**. Use baseline `abc0a6c`, not `upstream/main`. If any NEW `src/` file outside `src/standalone/` (beyond those two pre-existing core files) appears, stop and revert it.
 
 - [ ] **Step 5: Commit**
 
