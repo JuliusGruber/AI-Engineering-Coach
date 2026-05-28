@@ -151,7 +151,9 @@ function getMockData(method, params) {
       byLanguage: { labels: ['TypeScript', 'Python', 'Go', 'Rust'], aiLoc: [8200, 3100, 2100, 1120], userLoc: [1800, 900, 400, 100] },
       dailyTimeline: { labels: labels30, aiLoc: labels30.map(() => Math.floor(Math.random() * 600) + 100), userLoc: labels30.map(() => Math.floor(Math.random() * 150) + 20) },
       byWorkspace: { labels: ['my-api', 'frontend-app', 'data-pipeline', 'mobile-sdk', 'infra-tools'], aiLoc: [5000, 4200, 3100, 1500, 720], userLoc: [1200, 1000, 600, 300, 100] },
-      dailyByWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 200) + 50) }
+      dailyByWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 200) + 50), 'frontend-app': labels30.map(() => Math.floor(Math.random() * 150) + 40) },
+      dailyByModel: { 'gpt-4o': labels30.map(() => Math.floor(Math.random() * 180) + 40), 'claude-sonnet-4-20250514': labels30.map(() => Math.floor(Math.random() * 120) + 30) },
+      dailyByHarness: { 'Local Agent': labels30.map(() => Math.floor(Math.random() * 160) + 40), 'Claude Code': labels30.map(() => Math.floor(Math.random() * 90) + 20) }
     }),
 
     getConsumption: () => ({
@@ -307,26 +309,47 @@ function getMockData(method, params) {
       avgCreditsPerRequest: 0.065,
       avgCreditsPerDay: 4.75,
       costByModel: {
-        'gpt-4o': { model: 'gpt-4o', credits: 68.2, inputTokens: 2400000, outputTokens: 800000, cacheReadTokens: 600000, cacheWriteTokens: 200000, requests: 1200, partialRequests: 80, avgCreditsPerReq: 0.057 },
-        'claude-sonnet-4-20250514': { model: 'claude-sonnet-4-20250514', credits: 42.1, inputTokens: 1800000, outputTokens: 600000, cacheReadTokens: 400000, cacheWriteTokens: 100000, requests: 800, partialRequests: 60, avgCreditsPerReq: 0.053 }
+        'gpt-4o': { model: 'gpt-4o', credits: 68.2, uncachedInputTokens: 1600000, inputTokens: 2400000, outputTokens: 800000, cacheReadTokens: 600000, cacheWriteTokens: 200000, requests: 1200, countedRequests: 1040, partialRequests: 80, pendingRequests: 40, noDataRequests: 40, finalizableRequests: 1120, missingPct: 7.1, harnesses: ['Local Agent', 'Claude Code'], avgCreditsPerReq: 0.057 },
+        'claude-sonnet-4-20250514': { model: 'claude-sonnet-4-20250514', credits: 42.1, uncachedInputTokens: 1300000, inputTokens: 1800000, outputTokens: 600000, cacheReadTokens: 400000, cacheWriteTokens: 100000, requests: 800, countedRequests: 700, partialRequests: 60, pendingRequests: 20, noDataRequests: 20, finalizableRequests: 760, missingPct: 7.9, harnesses: ['Claude Code'], avgCreditsPerReq: 0.053 }
       },
-      daily: { labels: labels30, credits: labels30.map(() => Math.round(Math.random() * 8 + 2)), cumulative: labels30.map((_, i) => Math.round((i + 1) * 4.75)), byModel: { 'gpt-4o': labels30.map(() => Math.round(Math.random() * 4 + 1)) } },
-      weekly: { labels: ['W17', 'W18', 'W19', 'W20'], credits: [32, 36, 34, 40.5], cumulative: [32, 68, 102, 142.5], byModel: { 'gpt-4o': [15, 17, 16, 20.2] } },
-      topRequests: []
+      daily: { labels: labels30, credits: labels30.map(() => Math.round(Math.random() * 8 + 2)), cumulative: labels30.map((_, i) => Math.round((i + 1) * 4.75)), byModel: { 'gpt-4o': labels30.map(() => Math.floor(Math.random() * 50000) + 10000), 'claude-sonnet-4-20250514': labels30.map(() => Math.floor(Math.random() * 30000) + 5000) } },
+      weekly: { labels: ['W17', 'W18', 'W19', 'W20'], credits: [32, 36, 34, 40.5], cumulative: [32, 68, 102, 142.5], byModel: { 'gpt-4o': [320000, 360000, 340000, 405000], 'claude-sonnet-4-20250514': [180000, 200000, 190000, 230000] } },
+      dailyTokensByWorkspace: { labels: labels30, byWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 80000) + 20000), 'frontend-app': labels30.map(() => Math.floor(Math.random() * 60000) + 15000) } },
+      dailyTokensByHarness: { labels: labels30, byHarness: { 'Local Agent': labels30.map(() => Math.floor(Math.random() * 70000) + 20000), 'Claude Code': labels30.map(() => Math.floor(Math.random() * 50000) + 10000) } },
+      topRequests: [
+        { timestamp: new Date('2026-05-03T09:30:00Z').getTime(), workspace: 'my-api', harness: 'Local Agent', model: 'gpt-4o', inputTokens: 42000, outputTokens: 3800, credits: 0.12, status: 'complete', aggregationKind: 'exact', preview: 'Refactor the auth middleware to support token rotation', fullPrompt: 'Refactor the auth middleware to support token rotation and add tests.' }
+      ]
     }),
 
     getAiCreditBurndown: () => ({
       currentMonth: 'May 2026',
       daysInMonth: 31,
       dayOfMonth: 3,
-      budget: 300,
-      consumed: 42.5,
-      projected: 425,
-      dailyConsumption: { labels: ['2026-05-01', '2026-05-02', '2026-05-03'], values: [14.2, 15.1, 13.2], cumulative: [14.2, 29.3, 42.5] },
-      projectedLine: Array.from({ length: 31 }, (_, i) => Math.round(14 * (i + 1))),
-      budgetLine: Array.from({ length: 31 }, () => 300),
+      budget: 1500,
+      consumed: 248,
+      projected: 2480,
+      dailyConsumption: { labels: ['2026-05-01', '2026-05-02', '2026-05-03'], values: [80, 92, 76], cumulative: [80, 172, 248] },
+      projectedLine: Array.from({ length: 31 }, (_, i) => Math.round(80 * (i + 1))),
+      budgetLine: Array.from({ length: 31 }, () => 1500),
       status: 'warning',
-      recommendation: 'At current pace you will exceed your credit budget.'
+      recommendation: 'At current pace you will exceed your token budget.',
+      daysUntilExhaustion: 18,
+      safeDailyBudget: 45,
+      projectedOverage: 980,
+      missingPct: 8.3,
+      totalRequests: 2841,
+      countedRequests: 2200,
+      partialRequests: 200,
+      pendingRequests: 100,
+      noDataRequests: 341,
+      finalizableRequests: 2400,
+      coverageByDay: {
+        complete: [70, 80, 66], partial: [6, 7, 6], pending: [2, 3, 2], noData: [2, 2, 2], missing: [0, 0, 0]
+      },
+      byModel: {
+        'gpt-4o': { cumulative: Array.from({ length: 31 }, (_, i) => Math.round(150 * (i + 1))), budget: 0 },
+        'claude-sonnet-4-20250514': { cumulative: Array.from({ length: 31 }, (_, i) => Math.round(98 * (i + 1))), budget: 0 }
+      }
     }),
 
     getWorkflowOptimization: () => ({
@@ -411,7 +434,7 @@ function getMockData(method, params) {
 
 window.getMockData = getMockData;
 </script>
-<script src="/dist/webview/app.js"></script>
+<script src="/dist/standalone/webview/app.js"></script>
 <script>
 setTimeout(() => {
   window.dispatchEvent(new MessageEvent('message', {

@@ -38,28 +38,29 @@ test.describe('Output', () => {
     expect(content).toContain('Language');
   });
 
-  test('renders consumption tab with model totals', async ({ page }) => {
-    // Click consumption tab
+  test('renders token usage tab with model totals', async ({ page }) => {
+    // The Consumption / AI Credits tabs were consolidated into "Token Usage".
     const tabs = page.locator('#output-tabs .tab');
-    const consumptionTab = tabs.filter({ hasText: /consumption/i });
-    if (await consumptionTab.count() > 0) {
-      await consumptionTab.click();
-      await page.waitForFunction(() => {
-        const content = document.getElementById('content');
-        return content && !content.querySelector('.loading-spinner');
-      }, { timeout: 10000 });
-    }
+    const tokenTab = tabs.filter({ hasText: /token usage/i });
+    await tokenTab.first().click();
+    await page.waitForFunction(() => {
+      const content = document.getElementById('content');
+      return content && !content.querySelector('.loading-spinner');
+    }, { timeout: 10000 });
     const content = await page.textContent('#content');
+    // Model Token Breakdown table lists per-model rows.
     expect(content).toContain('gpt-4o');
   });
 
-  test('shows AI credits tab', async ({ page }) => {
+  test('shows token usage tab with token totals', async ({ page }) => {
     const tabs = page.locator('#output-tabs .tab');
-    const creditsTab = tabs.filter({ hasText: /Credit/i });
-    await creditsTab.first().click();
-    await page.waitForTimeout(2000);
+    const tokenTab = tabs.filter({ hasText: /token usage/i });
+    await tokenTab.first().click();
+    await page.waitForFunction(() => {
+      const content = document.getElementById('content');
+      return content && !content.querySelector('.loading-spinner');
+    }, { timeout: 10000 });
     const content = await page.textContent('#content');
-    // totalCredits: 142.5 displayed as 143 (rounded)
-    expect(content).toMatch(/143|Total AI Credits/);
+    expect(content).toMatch(/Total Tokens|Model Token Breakdown/);
   });
 });

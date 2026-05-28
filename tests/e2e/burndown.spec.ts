@@ -22,8 +22,8 @@ test.describe('Burndown', () => {
 
   test('renders budget info', async ({ page }) => {
     const content = await page.textContent('#content');
-    // budget: 1500
-    expect(content).toMatch(/1[,.]?500/);
+    // budget: 1500 — formatNum abbreviates >=1000, so it renders as "1.5K"
+    expect(content).toMatch(/1\.5\s?K|1[,.]?500/);
   });
 
   test('shows consumed number', async ({ page }) => {
@@ -34,8 +34,8 @@ test.describe('Burndown', () => {
 
   test('shows projected number', async ({ page }) => {
     const content = await page.textContent('#content');
-    // projected: 2480
-    expect(content).toMatch(/2[,.]?480/);
+    // projected: 2480 — formatNum abbreviates >=1000, so it renders as "2.5K"
+    expect(content).toMatch(/2\.5\s?K|2[,.]?480/);
   });
 
   test('status indicator visible', async ({ page }) => {
