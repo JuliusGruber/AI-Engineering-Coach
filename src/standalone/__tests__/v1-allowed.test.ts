@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { V1_ALLOWED } from '../v1-allowed';
 
 describe('V1_ALLOWED', () => {
-  it('contains exactly the documented 42', () => {
-    expect(V1_ALLOWED.size).toBe(42);
+  it('contains exactly the documented 45', () => {
+    expect(V1_ALLOWED.size).toBe(45);
   });
 
   it('is frozen / readonly', () => {
@@ -12,7 +12,7 @@ describe('V1_ALLOWED', () => {
     expect(() => {
       (V1_ALLOWED as Set<string>).add('saveRule');
     }).toThrow();
-    expect(V1_ALLOWED.size).toBe(42);
+    expect(V1_ALLOWED.size).toBe(45);
   });
 
   it('includes representative read-only methods and excludes write methods', () => {
@@ -26,6 +26,12 @@ describe('V1_ALLOWED', () => {
   it('includes the bucket-A additions reachable by an exposed page', () => {
     expect(V1_ALLOWED.has('getDataExplorer')).toBe(true); // page-data-explorer.ts:133
     expect(V1_ALLOWED.has('evaluateExpression')).toBe(true); // page-rule-playground.ts (Run)
+  });
+
+  it('includes the bucket-D NL-rule registry methods (now LLM-backed via the stub)', () => {
+    expect(V1_ALLOWED.has('explainOccurrence')).toBe(true); // panel-rpc.ts:895
+    expect(V1_ALLOWED.has('generateRule')).toBe(true); // panel-rpc.ts:996 (template fallback)
+    expect(V1_ALLOWED.has('compileNlRule')).toBe(true); // panel-rpc.ts:1134 (heuristic fallback offline)
   });
 
   it('does NOT add the deferred rule-write methods (no exposed page calls them)', () => {
