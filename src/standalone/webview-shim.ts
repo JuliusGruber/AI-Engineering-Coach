@@ -41,29 +41,74 @@ export function installShim(): void {
   let ws: WebSocket | null = null;
   let attempt = 0;
 
+  // Deep-link serialization state (see forwardDataReady). pendingRpc counts in-flight RPC
+  // requests (every outbound {type:'request'} gets exactly one inbound {type:'response'},
+  // success/error/disabled alike), so the shim — the sole RPC channel — knows when the
+  // default render's data fetches have settled.
+  let pendingRpc = 0;
+  let pendingDeepLink = false;
+  let quiescenceCheckQueued = false;
+
   // app.ts has no hash router — it navigates only via the document-delegated click on
   // [data-page] links (app.ts:451-461) and defaults to 'dashboard'. We cannot edit
   // app.ts (additive-only), so to honor deep-link URLs (#skills, #rule-editor, …) we
   // synthesize a [data-page] element and click it, reusing that delegation. This reaches
   // every route, incl. the deep-link-only ones with no nav link and burndown (→dashboard).
+  //
+  // We use <span> rather than <a> because jsdom resolves an href-less anchor's click to
+  // "current URL without fragment" and navigates, clearing location.hash. That would fire
+  // a second hashchange with an empty hash and — more dangerously — strip the deep-link
+  // hash before forwardDataReady's `if (location.hash)` test, silently disabling the
+  // entire quiescence-then-navigate path. <span> has no default click behavior.
   function navFromHash(): void {
     const id = location.hash.slice(1);
     if (!id) return;
-    const el = document.createElement('a');
+    const el = document.createElement('span');
     el.dataset.page = id;
-    el.style.display = 'none';
     document.body.appendChild(el);
     el.click();
     el.remove();
   }
 
-  // Forward a dataReady frame to app.ts, then re-apply the URL hash on the next task.
-  // app.ts has no hash router; onDataReady (queued via the postMessage) resets to
-  // 'dashboard', so the setTimeout(0) navFromHash runs after that task and lets a
-  // deep-link win. setTimeout(0) runs after the posted-message task in every browser.
+  // Apply the deep-link hash once the default render has settled. Checked on a macrotask:
+  // any RPC chained off a just-resolved one is issued in the preceding microtask (it's
+  // `await rpc(...)`, e.g. renderDashboard → loadDashSkills), so it has already bumped
+  // pendingRpc before this runs. pendingRpc===0 here therefore means "no more data writes
+  // are coming" — the default render is genuinely done.
+  function checkQuiescence(): void {
+    quiescenceCheckQueued = false;
+    if (!pendingDeepLink) return;
+    if (pendingRpc > 0) return; // still loading; the next drain-to-zero re-queues this check
+    pendingDeepLink = false;
+    navFromHash();
+  }
+
+  function queueQuiescenceCheck(): void {
+    if (quiescenceCheckQueued) return;
+    quiescenceCheckQueued = true;
+    setTimeout(checkQuiescence, 0);
+  }
+
+  // Forward the dataReady frame to app.ts, then apply the URL hash deep-link — but only AFTER
+  // the default render's RPCs quiesce. app.ts has no hash router; its onDataReady (queued via
+  // the postMessage below) ends with navigateTo(currentPage), which defaults to 'dashboard'.
+  // We honour deep-link URLs by synthesizing a [data-page] click (navFromHash), but that is a
+  // SECOND page render. Two page renders into the same #content overlap destructively: the
+  // default render's late RPCs resolve during the deep-link page's await and rewrite #content,
+  // null-derefing the deep-link page's post-await DOM wiring (renderOutput's
+  // getElementById('outputRange')! → withErrorBoundary) and corrupting the shared Chart.js
+  // registry (shared.ts charts[] / c.canvas.id). Navigating first instead only makes BOTH
+  // renders the same page id — still two overlapping renders, still corrupting (verified). The
+  // robust fix is to serialize: let the default render finish, THEN navigate, so the deep-link
+  // render is the sole in-flight render. The shim is the only RPC channel, so RPC quiescence is
+  // the "default render done" signal (its data writes are all RPC-driven). This is warm-server
+  // only — cold loads happen to avoid the timing overlap — but the serialization is unconditional.
   function forwardDataReady(frame: unknown): void {
     window.postMessage(frame, '*');
-    if (location.hash) setTimeout(navFromHash, 0);
+    if (location.hash) {
+      pendingDeepLink = true;
+      queueQuiescenceCheck();
+    }
   }
 
   // Warm-server race guard: the server pushes dataReady on connect (server.ts:182). If it
@@ -131,6 +176,12 @@ export function installShim(): void {
       // Banner + degradation decisions live here — the shim is the only place that sees
       // every frame.
       const f = frame as { type?: string; id?: unknown; data?: { code?: string; method?: string } };
+      // Count the response against its in-flight request (success/error/disabled alike) so the
+      // deep-link serializer (forwardDataReady) learns when the default render's RPCs settle.
+      if (f.type === 'response') {
+        if (pendingRpc > 0) pendingRpc--;
+        if (pendingDeepLink && pendingRpc === 0) queueQuiescenceCheck();
+      }
       if (f.data?.code === 'standalone-v1-disabled') {
         const method = f.data.method ?? '';
         if (BANNER_WORTHY.has(method)) showRoadmapBanner();
@@ -163,6 +214,9 @@ export function installShim(): void {
   // even when the token is missing (failure mode is RPC timeouts, not a blank page).
   globalThis.acquireVsCodeApi = () => ({
     postMessage: (msg: unknown) => {
+      // Track outbound RPC requests for the deep-link serializer (forwardDataReady): each
+      // request gets exactly one response, decremented in the inbound handler above.
+      if ((msg as { type?: string })?.type === 'request') pendingRpc++;
       const frame = JSON.stringify(msg);
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame);
       else {

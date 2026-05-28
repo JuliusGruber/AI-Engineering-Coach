@@ -352,12 +352,14 @@ describe('hash navigation bridge', () => {
     window.location.hash = '#timeline';
     window.dispatchEvent(new Event('hashchange')); // drive deterministically
     expect(nav.page()).toBe('timeline');
-    // the synthesized element is removed after the click (no DOM leak)
-    expect(document.querySelector('body > a[data-page]')).toBeNull();
+    // the synthesized element is removed after the click (no DOM leak). We use <span>
+    // (not <a>) so the click has no default navigation that would clear location.hash —
+    // see navFromHash in webview-shim.ts.
+    expect(document.querySelector('body > [data-page]')).toBeNull();
     nav.stop();
   });
 
-  it('applies the URL hash once a dataReady frame arrives (after onDataReady)', () => {
+  it('applies the URL hash after a dataReady frame, deferred to a macrotask (immediate when no RPCs are in flight)', () => {
     vi.useFakeTimers();
     window.location.hash = '#skills'; // set BEFORE install so no stray hashchange fires
     installWithToken();
@@ -365,8 +367,8 @@ describe('hash navigation bridge', () => {
     const ws = MockWebSocket.instances[0];
 
     ws.message(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
-    expect(nav.page()).toBeUndefined(); // deferred — not applied synchronously
-    vi.advanceTimersByTime(1); // fire setTimeout(navFromHash, 0)
+    expect(nav.page()).toBeUndefined(); // deferred — navigation waits for RPC quiescence
+    vi.advanceTimersByTime(1); // no RPCs pending → quiescence check fires → navigate
     expect(nav.page()).toBe('skills');
     nav.stop();
   });
@@ -379,6 +381,45 @@ describe('hash navigation bridge', () => {
     MockWebSocket.instances[0].message(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
     vi.advanceTimersByTime(1);
     expect(nav.page()).toBeUndefined();
+    nav.stop();
+  });
+
+  it('defers the deep-link nav until the default render\'s RPCs quiesce, then navigates exactly once (Task R2 render-race fix)', () => {
+    // Regression for the warm-suite double-render clobber. Honouring a deep-link hash means a
+    // SECOND page render (navFromHash) on top of app.ts's onDataReady → navigateTo('dashboard')
+    // default render. Two page renders into the same #content overlap destructively: the
+    // default render's late RPCs resolve during the deep-link page's await and rewrite #content,
+    // null-derefing the deep-link page's post-await DOM (renderOutput #outputRange →
+    // withErrorBoundary) and corrupting the shared Chart.js registry (shared.ts charts[] /
+    // c.canvas.id). The shim is the sole RPC channel, so it holds the deep-link nav until the
+    // default render's RPCs settle — then the deep-link render is the only in-flight render.
+    vi.useFakeTimers();
+    window.location.hash = '#output';
+    installWithToken();
+    // Drain the stray hashchange queued by assigning location.hash (a jsdom artifact; a real
+    // page load carries the hash without firing hashchange). Capture nav only afterwards so the
+    // quiescence deferral is what we measure, not the stray.
+    vi.advanceTimersByTime(1);
+    const nav = captureNav();
+    const ws = MockWebSocket.instances[0];
+    const api = (globalThis as { acquireVsCodeApi: () => { postMessage(m: unknown): void } })
+      .acquireVsCodeApi();
+
+    ws.message(JSON.stringify({ type: 'dataReady', currentWorkspace: '' }));
+    // Simulate the default render's RPC burst (app.ts onDataReady issues these for real).
+    api.postMessage({ type: 'request', id: 'r1', method: 'getStats' });
+    api.postMessage({ type: 'request', id: 'r2', method: 'getDailyActivity' });
+
+    vi.advanceTimersByTime(1);
+    expect(nav.page()).toBeUndefined(); // RPCs in flight → must NOT navigate (would clobber)
+
+    ws.message(JSON.stringify({ type: 'response', id: 'r1', data: {} }));
+    vi.advanceTimersByTime(1);
+    expect(nav.page()).toBeUndefined(); // one request still pending → still deferred
+
+    ws.message(JSON.stringify({ type: 'response', id: 'r2', data: {} }));
+    vi.advanceTimersByTime(1);
+    expect(nav.page()).toBe('output'); // quiesced → deep-link applied, exactly once
     nav.stop();
   });
 });
