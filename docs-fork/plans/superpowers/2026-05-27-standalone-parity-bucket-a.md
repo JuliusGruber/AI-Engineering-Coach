@@ -945,7 +945,26 @@ git commit -m "docs(standalone): mark bucket A shipped + document the token over
 
 ---
 
-## EXECUTION STATUS — paused 2026-05-27 (session 2; resume here)
+## EXECUTION STATUS — ✅ COMPLETE 2026-05-28 (session 3)
+
+All 11 tasks (+ R, + R2) shipped and pushed to `origin/main` (HEAD `71b728b`).
+The R2 render-race blocker below was fixed in `96dcf14` (single deep-link render
+on warm connect); the Task-10 smoke is now **17/17 green**. Task 11 (docs +
+`pack:check` + `test:all` + invariant) committed in `71b728b`.
+
+Final verification (2026-05-28): build ✅; unit 1143 passed (2 pre-existing
+`src/core/` failures — metric-engine snapshot + parser-codex timeout — fail on a
+clean tree, out of scope); integration 12 passed ✅; standalone smoke 17/17 ✅;
+e2e 26 passed (9 pre-existing FF=false failures against the **unchanged** extension
+webview `dist/webview/app.js` — they need FF=true behavior the extension gates off;
+this branch never touches `tests/e2e/`, `src/webview/`, or `src/core/`, so they
+fail identically on baseline). Bundle FF confirmed: shared=false, standalone=true.
+Additive-only invariant holds: `git diff --name-only abc0a6c -- src/` is entirely
+under `src/standalone/`. The historical session-2 status is retained below.
+
+---
+
+### [HISTORICAL] paused 2026-05-27 (session 2)
 
 **Branch:** working directly on `main` (user opted out of a worktree).
 
