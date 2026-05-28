@@ -95,3 +95,66 @@ test('burndown page renders end-to-end (override active, not the disabled banner
   await expect(page.locator('main#content')).not.toContainText('temporarily disabled');
   expect(errors, `console errors on #burndown:\n${errors.join('\n')}`).toEqual([]);
 });
+
+test('rule playground compiles a natural-language rule (degrades gracefully with no LLM key)', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', (e) => errors.push(String(e)));
+
+  await page.goto(pageUrl('rule-playground'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="rule-playground"]')).toHaveClass(/active/, { timeout: 15_000 });
+
+  // Drive compileNlRule directly through the shim's outbound channel and confirm it resolves
+  // (a non-error response). Offline it returns a heuristic template; it must never reject.
+  const resolved = await page.evaluate(async () => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    return await new Promise<boolean>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string; data?: { error?: string; markdown?: string } };
+        if (f.type === 'response' && f.id === 'smoke-compile-nl') {
+          window.removeEventListener('message', onMsg);
+          // Resolved with a scaffolded rule and no error => graceful NL-rule path works.
+          resolve(typeof f.data?.markdown === 'string' && !f.data?.error);
+        }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id: 'smoke-compile-nl', method: 'compileNlRule', params: { prompt: 'flag short prompts' } });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve(false); }, 10_000);
+    });
+  });
+  expect(resolved).toBe(true);
+  expect(errors, `console errors on #rule-playground:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('rule editor generates a natural-language rule (generateRule degrades gracefully with no LLM key)', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', (e) => errors.push(String(e)));
+
+  // generateRule's live UI entry is the "+ New Rule" modal on the anti-patterns page, reached via
+  // the rule-editor route (app.ts:645 -> renderAntiPatterns). The page renders even though
+  // getRuleEditor is disabled (shim RESOLVE_EMPTY_WHEN_DISABLED). generateRule has a template
+  // fallback (panel-rpc.ts:1035), so offline it resolves with markdown and never rejects. We drive
+  // it directly through the shim's outbound channel (page-agnostic) and assert the graceful path.
+  await page.goto(pageUrl('rule-editor'), { waitUntil: 'load' });
+  await expect.poll(() => page.locator('main#content > *').count(), { timeout: 15_000 }).toBeGreaterThan(0);
+
+  const resolved = await page.evaluate(async () => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    return await new Promise<boolean>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string; data?: { error?: string; markdown?: string } };
+        if (f.type === 'response' && f.id === 'smoke-generate-rule') {
+          window.removeEventListener('message', onMsg);
+          // Resolved with markdown and no error => graceful generateRule path works offline.
+          resolve(typeof f.data?.markdown === 'string' && !f.data?.error);
+        }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id: 'smoke-generate-rule', method: 'generateRule', params: { prompt: 'flag short prompts' } });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve(false); }, 10_000);
+    });
+  });
+  expect(resolved).toBe(true);
+  expect(errors, `console errors on #rule-editor:\n${errors.join('\n')}`).toEqual([]);
+});
