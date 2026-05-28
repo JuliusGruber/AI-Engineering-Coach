@@ -331,8 +331,10 @@ export function calibrate(
  */
 export function serializeCalibration(cal: CalibrationResult): string {
   const lines = ['<!-- calibration:'];
-  lines.push(`  dataset: ${cal.datasetSize.toLocaleString()} ${cal.scope}`);
-  lines.push(`  flagged: ${cal.flaggedCount.toLocaleString()} (${cal.flaggedPct}%)`);
+  // Pin en-US so the persisted comment round-trips identically regardless of the
+  // host machine's locale (otherwise "1,234" serializes as "1 234"/"1.234" elsewhere).
+  lines.push(`  dataset: ${cal.datasetSize.toLocaleString('en-US')} ${cal.scope}`);
+  lines.push(`  flagged: ${cal.flaggedCount.toLocaleString('en-US')} (${cal.flaggedPct}%)`);
   if (cal.distribution) {
     lines.push(`  p25: ${cal.distribution.p25}, p50: ${cal.distribution.p50}, p75: ${cal.distribution.p75}`);
     lines.push(`  min: ${cal.distribution.min}, max: ${cal.distribution.max}`);

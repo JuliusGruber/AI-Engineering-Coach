@@ -99,7 +99,7 @@ describe('parseCodexSessions', () => {
       expect(sessions[0].sessionId).toBe('sess-codex-large');
       expect(sessions[0].requests).toHaveLength(1);
     });
-  });
+  }, 120_000); // writes a >MAX_FILE_SIZE fixture to disk; slow on Windows/slow disks
 });
 
 describe('findCodexDirs', () => {
