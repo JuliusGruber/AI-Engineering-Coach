@@ -5,6 +5,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { bootCli, makeTmpHome, stopCli, wsConnect, wsRequest, wsWaitFor, type Booted, CLI } from './helpers';
+import { createFakeLlmServer } from '../fixtures/fake-llm-server.mjs';
+import type { AddressInfo } from 'node:net';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -156,5 +158,44 @@ describe('cli rpc + lifecycle', () => {
     const code = await new Promise<number | null>((resolve) => child.once('exit', resolve));
     expect(code).toBe(1); // bin/coach maps the rejected runCli to exit 1
     expect(buf).toMatch(/--port/);
+  });
+
+  it('compileNlRule degrades to a heuristic template offline (no key -> usedLlm:false, never errors)', async () => {
+    const home = makeTmpHome();
+    const b = track(await bootCli(home, ['--port', '7362'], 20_000, { ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '' }), home); // no LLM env
+    const ws = await wsConnect(b);
+    await wsWaitFor(ws, 'dataReady');
+    const res = await wsRequest(ws, 'compileNlRule', { prompt: 'flag short prompts' }, 'nl1');
+    ws.close();
+
+    const data = res.data as { usedLlm?: boolean; valid?: boolean; notes?: string[]; error?: string; markdown?: string };
+    expect(data.error).toBeUndefined(); // parity: compileNlRule never surfaces an error offline
+    expect(data.usedLlm).toBe(false);
+    expect(data.markdown).toContain('# Filter'); // a scaffolded rule is still returned
+    // No provider → vscode-stub selectChatModels returns [] silently (no throw → no note).
+    expect(Array.isArray(data.notes)).toBe(true);
+  });
+
+  it('compileNlRule uses the LLM when a provider is configured (usedLlm:true, valid:true)', async () => {
+    const fake = createFakeLlmServer();
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => r()));
+    const port = (fake.address() as AddressInfo).port;
+    try {
+      const home = makeTmpHome();
+      const b = track(
+        await bootCli(home, ['--port', '7363'], 20_000, { ANTHROPIC_API_KEY: 'test-key', COACH_LLM_BASE_URL: `http://127.0.0.1:${port}` }),
+        home,
+      );
+      const ws = await wsConnect(b);
+      await wsWaitFor(ws, 'dataReady');
+      const res = await wsRequest(ws, 'compileNlRule', { prompt: 'flag short prompts' }, 'nl2');
+      ws.close();
+
+      const data = res.data as { usedLlm?: boolean; valid?: boolean };
+      expect(data.usedLlm).toBe(true); // requires rule-compiler -> stub lm -> fake provider, and parseRule success
+      expect(data.valid).toBe(true);
+    } finally {
+      await new Promise<void>((r) => fake.close(() => r()));
+    }
   });
 });

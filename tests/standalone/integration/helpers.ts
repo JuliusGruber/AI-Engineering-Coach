@@ -29,9 +29,9 @@ const URL_RE = /coach (already )?running at (http:\/\/127\.0\.0\.1:(\d+)\/\?t=([
 // Fork the built CLI with HOME/USERPROFILE pointed at an isolated tmp home so
 // os.homedir() (used by state + the parser) resolves there. Resolves once the URL
 // line is seen on stderr; rejects on early exit or timeout (with captured stderr).
-export function bootCli(home: string, args: string[] = [], timeoutMs = 20_000): Promise<Booted> {
+export function bootCli(home: string, args: string[] = [], timeoutMs = 20_000, extraEnv: Record<string, string> = {}): Promise<Booted> {
   const child = fork(CLI, ['--no-open', ...args], {
-    env: { ...process.env, HOME: home, USERPROFILE: home },
+    env: { ...process.env, HOME: home, USERPROFILE: home, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   let buf = '';
