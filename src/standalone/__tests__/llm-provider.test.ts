@@ -72,7 +72,7 @@ describe('Anthropic provider request shaping', () => {
     const text = await collect(p.send([U('sys'), U('user')], {}, new AbortController().signal));
 
     expect(text).toBe('hello');
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://api.anthropic.com/v1/messages');
     expect((init.headers as Record<string, string>)['anthropic-version']).toBe('2023-06-01');
     expect((init.headers as Record<string, string>)['x-api-key']).toBe('secret');
@@ -86,7 +86,7 @@ describe('Anthropic provider request shaping', () => {
     vi.stubGlobal('fetch', fetchMock);
     const p = detectProvider({ ANTHROPIC_API_KEY: 'k', COACH_LLM_BASE_URL: 'http://127.0.0.1:9', COACH_LLM_MAX_TOKENS: '256' } as NodeJS.ProcessEnv)!;
     await collect(p.send([U('hi')], {}, new AbortController().signal));
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:9/v1/messages');
     expect(JSON.parse(init.body as string).max_tokens).toBe(256);
   });
@@ -106,7 +106,7 @@ describe('OpenAI provider request shaping', () => {
     const rf = { type: 'json_schema', json_schema: { name: 'x', strict: true, schema: {} } };
     const text = await collect(p.send([U('hi')], { modelOptions: { response_format: rf } }, new AbortController().signal));
     expect(text).toBe('oai');
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://api.openai.com/v1/chat/completions');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer tok');
     expect(JSON.parse(init.body as string).response_format).toEqual(rf);
