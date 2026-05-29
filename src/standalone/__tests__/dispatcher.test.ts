@@ -42,10 +42,10 @@ afterEach(() => {
 describe('dispatch — allowlist gate', () => {
   it('blocks non-whitelisted method (no log line)', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const res = await dispatch('saveRule', {}, readyCtx);
+    const res = await dispatch('reviewLocalRules', {}, readyCtx);
     expect(res).toEqual({
       ok: false,
-      error: { code: 'standalone-v1-disabled', method: 'saveRule' },
+      error: { code: 'standalone-v1-disabled', method: 'reviewLocalRules' },
     });
     expect(errSpy).not.toHaveBeenCalled();
     expect(mockedGetRpcHandler).not.toHaveBeenCalled();

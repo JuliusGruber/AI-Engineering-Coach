@@ -219,20 +219,20 @@ describe('WebSocket protocol', () => {
   it('nests a disabled-method error inside data, with no sibling error field', async () => {
     mockedDispatch.mockResolvedValueOnce({
       ok: false,
-      error: { code: 'standalone-v1-disabled', method: 'saveRule' },
+      error: { code: 'standalone-v1-disabled', method: 'reviewLocalRules' },
     });
     const h = await start();
     const client = new Client(wsUrl(h, h.token));
     await client.opened();
 
-    client.send({ type: 'request', id: 'y', method: 'saveRule' });
+    client.send({ type: 'request', id: 'y', method: 'reviewLocalRules' });
     const res = await client.waitFor((f) => f.type === 'response' && f.id === 'y');
 
     const data = res.data as { error?: unknown; code?: unknown; method?: unknown };
     expect(typeof data.error).toBe('string');
     expect(data.error).toBeTruthy();
     expect(data.code).toBe('standalone-v1-disabled');
-    expect(data.method).toBe('saveRule');
+    expect(data.method).toBe('reviewLocalRules');
     expect('error' in res).toBe(false); // never a sibling field
     client.close();
   });

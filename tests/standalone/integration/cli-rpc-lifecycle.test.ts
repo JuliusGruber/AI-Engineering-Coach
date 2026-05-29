@@ -23,13 +23,13 @@ describe('cli rpc + lifecycle', () => {
     const home = makeTmpHome();
     const b = track(await bootCli(home, ['--port', '7358']), home);
     const ws = await wsConnect(b);
-    // saveRule ∉ V1_ALLOWED → tier-2 disabled, independent of data-ready (dispatcher).
-    const res = await wsRequest(ws, 'saveRule', { name: 'x' }, 'd1');
+    // reviewLocalRules ∉ V1_ALLOWED → tier-2 disabled, independent of data-ready (dispatcher).
+    const res = await wsRequest(ws, 'reviewLocalRules', {}, 'd1');
     ws.close();
     expect(res).toMatchObject({
       type: 'response',
       id: 'd1',
-      data: { code: 'standalone-v1-disabled', method: 'saveRule' },
+      data: { code: 'standalone-v1-disabled', method: 'reviewLocalRules' },
     });
     expect(typeof (res.data as { error: unknown }).error).toBe('string');
     expect((res.data as { error: string }).error.length).toBeGreaterThan(0);
