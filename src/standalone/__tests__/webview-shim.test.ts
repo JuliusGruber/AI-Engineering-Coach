@@ -76,15 +76,14 @@ afterEach(() => {
 });
 
 describe('BANNER_WORTHY', () => {
-  it('contains only the still-degraded methods after bucket D went live', () => {
-    expect(BANNER_WORTHY.has('createSkill')).toBe(true); // opens VS Code chat; still degraded
-    expect(BANNER_WORTHY.has('installCatalogItem')).toBe(true); // bucket B (write path)
-    expect(BANNER_WORTHY.has('getRuleEditor')).toBe(true);
-    expect(BANNER_WORTHY.has('triageCatalog')).toBe(false); // now bridged & live (bucket D)
-    expect(BANNER_WORTHY.has('generateLearningQuiz')).toBe(false); // now bridged & live
-    expect(BANNER_WORTHY.has('triageSkills')).toBe(false); // proactive → silent
-    expect(BANNER_WORTHY.has('getStats')).toBe(false); // allowed, not disabled
-    expect(BANNER_WORTHY.size).toBe(4);
+  it('contains only createSkill after buckets D + B went live', () => {
+    expect(BANNER_WORTHY.has('createSkill')).toBe(true);       // opens VS Code chat; still degraded
+    expect(BANNER_WORTHY.has('installSkill')).toBe(false);     // bucket B: now bridged & live
+    expect(BANNER_WORTHY.has('installCatalogItem')).toBe(false); // bucket B: now bridged & live
+    expect(BANNER_WORTHY.has('getRuleEditor')).toBe(false);    // bucket B: now allowlisted & live
+    expect(BANNER_WORTHY.has('triageCatalog')).toBe(false);    // bucket D
+    expect(BANNER_WORTHY.has('getStats')).toBe(false);         // allowed, not disabled
+    expect(BANNER_WORTHY.size).toBe(1);
   });
 });
 
@@ -300,27 +299,14 @@ describe('roadmap banner', () => {
     const ws = MockWebSocket.instances[0];
 
     ws.message(JSON.stringify(disabledFrame('createSkill')));
-    ws.message(JSON.stringify(disabledFrame('installSkill')));
+    ws.message(JSON.stringify(disabledFrame('createSkill')));
 
     expect(document.querySelectorAll(BANNER_ID)).toHaveLength(1);
   });
 
-  it('neutralizes a disabled RESOLVE_EMPTY method to empty data (rpc resolves) and still banners', () => {
-    installWithToken();
-    const ws = MockWebSocket.instances[0];
-
-    ws.message(JSON.stringify(disabledFrame('getRuleEditor')));
-
-    // getRuleEditor ∈ BANNER_WORTHY → banner still fires.
-    expect(document.querySelector(BANNER_ID)).not.toBeNull();
-    // Forwarded frame carries empty data (no error) so rpc() resolves and
-    // renderAntiPatterns degrades instead of crashing into the error boundary.
-    expect(window.postMessage).toHaveBeenCalledWith(
-      { type: 'response', id: '7', data: {} },
-      '*',
-    );
-    // The original error-bearing frame is NOT forwarded (would make rpc() reject).
-    expect(window.postMessage).not.toHaveBeenCalledWith(disabledFrame('getRuleEditor'), '*');
+  it('RESOLVE_EMPTY_WHEN_DISABLED is empty — getRuleEditor is allowlisted now (mechanism inert)', () => {
+    expect(RESOLVE_EMPTY_WHEN_DISABLED.size).toBe(0);
+    expect(RESOLVE_EMPTY_WHEN_DISABLED.has('getRuleEditor')).toBe(false);
   });
 
   it('forwards a non-RESOLVE_EMPTY banner method unchanged (it keeps rejecting)', () => {

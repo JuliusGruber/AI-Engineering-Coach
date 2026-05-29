@@ -15,25 +15,17 @@ declare global {
 }
 
 // Curated set: only these disabled methods trigger the roadmap banner. Everything else
-// disabled is silent (see docs-fork/specs/00-overview.md "Disabled-method UX"). Bucket D
-// went live: the Learning ×4, generateSkillContent, and triageCatalog methods are now
-// allowlisted/bridged, so the dispatcher never returns standalone-v1-disabled for them and
-// their banner branch is unreachable — removed here for hygiene. createSkill stays
-// (opens VS Code chat); installSkill/installCatalogItem are bucket B; getRuleEditor is the
-// deep-link route with no standalone editor.
-export const BANNER_WORTHY: ReadonlySet<string> = new Set([
-  'createSkill', 'installSkill', 'installCatalogItem', 'getRuleEditor',
-]);
+// disabled is silent. After buckets D + B, only createSkill remains degraded (it opens VS
+// Code chat — no standalone equivalent). installSkill/installCatalogItem (bucket B) are now
+// bridged and getRuleEditor (bucket B) is allowlisted, so the dispatcher never returns
+// standalone-v1-disabled for them and their banner branch is unreachable — removed for hygiene.
+export const BANNER_WORTHY: ReadonlySet<string> = new Set(['createSkill']);
 
-// Disabled methods a page awaits as PRIMARY render data with no per-call fallback. A
-// disabled response makes rpc() (shared.ts) reject, and these rejections are NOT caught at
-// the call site, so they crash the whole page render into withErrorBoundary instead of
-// degrading. getRuleEditor is awaited in renderAntiPatterns' bare Promise.all
-// (page-antipatterns.ts) and is the rule-editor route's sole data source. For these the
-// shim forwards an empty-data frame so rpc() resolves and the page degrades gracefully.
-// The other BANNER_WORTHY methods are user-action calls guarded by their own try/catch and
-// MUST keep rejecting — resolving them to empty would fake a successful action.
-export const RESOLVE_EMPTY_WHEN_DISABLED: ReadonlySet<string> = new Set(['getRuleEditor']);
+// Disabled methods a page awaits as PRIMARY render data with no per-call fallback would need
+// neutralizing to an empty frame so rpc() resolves instead of crashing the page render.
+// getRuleEditor was the sole member; bucket B allowlists it, so the dispatcher no longer
+// disables it and this branch is unreachable. Emptied for hygiene (mechanism kept inert).
+export const RESOLVE_EMPTY_WHEN_DISABLED: ReadonlySet<string> = new Set<string>();
 
 export function installShim(): void {
   const token =
