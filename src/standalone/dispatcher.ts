@@ -11,6 +11,9 @@ export interface DispatchContext {
   // handler-error ("data not ready").
   analyzer?: Analyzer;
   parseResult?: ParseResult;
+  // Optional: called for each event frame emitted by PanelRequestService (e.g. reviewProgress).
+  // Added in Task 8 (request-service-bridge); wired into the server dispatch in Task 9.
+  emitEvent?: (frame: Record<string, unknown>) => void;
 }
 
 // Internal discriminated union. The SERVER (01-server) maps `{ ok:false, error }`
