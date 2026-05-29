@@ -1,15 +1,19 @@
 // src/standalone/v1-service-allowed.ts
-// The 9 PanelRequestService methods exposed via the standalone service-bridge tier
-// (bucket D). Learning ×4 + Skill ×4 (incl. generateSkillContent) + Context ×1.
-// Excludes createSkill (opens VS Code chat, not an LLM call) and the bucket-B/E methods
-// (installSkill / installCatalogItem / exportSummary / getWorkspaceDeps / getSdlc*) that
-// also live in PanelRequestService but are not allowlisted here. See
-// docs-fork/superpowers/spec/2026-05-27-standalone-parity-bucket-d-design.md § C.
+// The 12 PanelRequestService methods exposed via the standalone service-bridge tier.
+// Learning ×4 + Skill ×4 (incl. generateSkillContent) + Context ×1 (= 9, bucket D) +
+// bucket-B writes ×3 (installSkill, installCatalogItem, exportSummary) = 12.
+// Still excludes createSkill (opens VS Code chat, not an LLM call) and the bucket-E methods
+// (getWorkspaceDeps / getSdlc*) that also live in PanelRequestService but are not allowlisted
+// here. See docs-fork/superpowers/spec/2026-05-27-standalone-parity-bucket-d-design.md § C and
+// docs-fork/superpowers/spec/2026-05-29-standalone-parity-bucket-b-design.md § C.
 
 const _inner = new Set<string>([
   'generateLearningQuiz', 'generateCodeComparison', 'generateDidYouKnow', 'generateLearningResources',
   'generateSkillContent', 'triageSkills', 'triageCatalog', 'discoverCatalog',
   'reviewContextFiles',
+  // Bucket B — service-tier writes. installSkill/installCatalogItem write via the vscode-stub
+  // workspace.fs seam; exportSummary delegates to exportSummaryFiles through the same seam.
+  'installSkill', 'installCatalogItem', 'exportSummary',
 ]);
 
 function _throwMutation(): never {
