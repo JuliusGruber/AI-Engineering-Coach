@@ -157,3 +157,45 @@ describe('dispatch — registry LLM-unavailable rewrite (grilling decision 6)', 
     expect(res).toEqual({ ok: true, data: { ok: false, explanation: '', error: LLM_UNAVAILABLE_HINT } });
   });
 });
+
+describe('dispatch — bucket B tier routing', () => {
+  it('routes saveRule through the registry tier (now allowlisted)', async () => {
+    mockedGetRpcHandler.mockReturnValueOnce(fakeHandler(async () => ({ ok: true, filePath: '/p/x.md' })));
+    const res = await dispatch('saveRule', { markdown: 'x' }, readyCtx);
+    expect(res).toEqual({ ok: true, data: { ok: true, filePath: '/p/x.md' } });
+    expect(mockedGetRpcHandler).toHaveBeenCalledWith('saveRule');
+    expect(mockedDispatchService).not.toHaveBeenCalled();
+  });
+
+  it('routes getRuleEditor through the registry tier (now allowlisted)', async () => {
+    mockedGetRpcHandler.mockReturnValueOnce(fakeHandler(async () => ({ rules: [], layers: {}, pending: [] })));
+    const res = await dispatch('getRuleEditor', {}, readyCtx);
+    expect(res).toEqual({ ok: true, data: { rules: [], layers: {}, pending: [] } });
+    expect(mockedGetRpcHandler).toHaveBeenCalledWith('getRuleEditor');
+  });
+
+  it('routes installSkill to the service bridge, not the registry', async () => {
+    mockedDispatchService.mockResolvedValueOnce({ ok: true, data: { ok: true, path: '/p/demo.md' } });
+    const res = await dispatch('installSkill', { filename: 'demo.md', content: 'x' }, readyCtx);
+    expect(res).toEqual({ ok: true, data: { ok: true, path: '/p/demo.md' } });
+    expect(mockedDispatchService).toHaveBeenCalledWith('installSkill', { filename: 'demo.md', content: 'x' }, readyCtx);
+    expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+  });
+
+  it('routes exportSummary to the service bridge, not the registry', async () => {
+    mockedDispatchService.mockResolvedValueOnce({ ok: true, data: { ok: true, folder: '/exports' } });
+    const res = await dispatch('exportSummary', {}, readyCtx);
+    expect(res).toEqual({ ok: true, data: { ok: true, folder: '/exports' } });
+    expect(mockedDispatchService).toHaveBeenCalledWith('exportSummary', {}, readyCtx);
+    expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+  });
+
+  it('still disables reviewLocalRules and createSkill (neither allowlist)', async () => {
+    const reviewRes = await dispatch('reviewLocalRules', {}, readyCtx);
+    const createRes = await dispatch('createSkill', {}, readyCtx);
+    expect(reviewRes).toEqual({ ok: false, error: { code: 'standalone-v1-disabled', method: 'reviewLocalRules' } });
+    expect(createRes).toEqual({ ok: false, error: { code: 'standalone-v1-disabled', method: 'createSkill' } });
+    expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+    expect(mockedDispatchService).not.toHaveBeenCalled();
+  });
+});
