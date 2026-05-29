@@ -17,6 +17,11 @@ vi.mock('../../webview/panel-rpc', async (importOriginal) => {
 
 const mockedGetRpcHandler = vi.mocked(panelRpc.getRpcHandler);
 
+import { dispatchServiceMethod } from '../request-service-bridge';
+import { LLM_UNAVAILABLE_HINT } from '../llm-unavailable'; // real helper (not mocked) — the rewrite runs
+vi.mock('../request-service-bridge', () => ({ dispatchServiceMethod: vi.fn() }));
+const mockedDispatchService = vi.mocked(dispatchServiceMethod);
+
 // A context with data "ready". Handlers are mocked, so empty objects are fine.
 const readyCtx: DispatchContext = {
   analyzer: {} as unknown as Analyzer,
@@ -31,6 +36,7 @@ afterEach(() => {
   vi.restoreAllMocks();        // restores console spies
   mockedGetRpcHandler.mockReset();
   mockedOpen.mockReset();
+  mockedDispatchService.mockReset();
 });
 
 describe('dispatch — allowlist gate', () => {
@@ -114,5 +120,40 @@ describe('dispatch — native tier', () => {
     expect(res).toEqual({ ok: true, data: { ok: true } });
     expect(mockedOpen).toHaveBeenCalledTimes(1);
     expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+  });
+});
+
+describe('dispatch — service-bridge tier', () => {
+  it('routes a V1_SERVICE_ALLOWED method to the bridge (not the registry)', async () => {
+    mockedDispatchService.mockResolvedValueOnce({ ok: true, data: { questions: [] } });
+    const res = await dispatch('generateLearningQuiz', { difficulty: 'easy' }, readyCtx);
+    expect(res).toEqual({ ok: true, data: { questions: [] } });
+    expect(mockedDispatchService).toHaveBeenCalledWith('generateLearningQuiz', { difficulty: 'easy' }, readyCtx);
+    expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+  });
+
+  it('routes service methods WITHOUT the data-ready guard (bridge called even with empty ctx)', async () => {
+    mockedDispatchService.mockResolvedValueOnce({ ok: false, error: { code: 'handler-error', method: 'reviewContextFiles', message: 'Analyzer not ready.' } });
+    const res = await dispatch('reviewContextFiles', {}, {}); // no analyzer/parseResult
+    // The tier did NOT short-circuit with the generic "data not ready"; the handler's own message survives.
+    expect(mockedDispatchService).toHaveBeenCalledWith('reviewContextFiles', {}, {});
+    expect(res).toEqual({ ok: false, error: { code: 'handler-error', method: 'reviewContextFiles', message: 'Analyzer not ready.' } });
+  });
+
+  it('does NOT route a non-service method to the bridge', async () => {
+    mockedGetRpcHandler.mockReturnValueOnce(fakeHandler(async () => ({ ok: true })));
+    await dispatch('compileNlRule', {}, readyCtx); // NL-rule is a registry method, not a service method
+    expect(mockedDispatchService).not.toHaveBeenCalled();
+    expect(mockedGetRpcHandler).toHaveBeenCalledWith('compileNlRule');
+  });
+});
+
+describe('dispatch — registry LLM-unavailable rewrite (grilling decision 6)', () => {
+  it('rewrites data.error "No language model available" from a registry handler to the standalone hint', async () => {
+    // explainOccurrence catches its own LLM throw (panel-rpc.ts:939) and returns { error } as data,
+    // so the rewrite must operate on the handler's returned data, not on a thrown dispatcher error.
+    mockedGetRpcHandler.mockReturnValueOnce(fakeHandler(async () => ({ ok: false, explanation: '', error: 'No language model available. Make sure GitHub Copilot is installed and signed in.' })));
+    const res = await dispatch('explainOccurrence', {}, readyCtx);
+    expect(res).toEqual({ ok: true, data: { ok: false, explanation: '', error: LLM_UNAVAILABLE_HINT } });
   });
 });
