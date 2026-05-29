@@ -226,3 +226,77 @@ test('context health review degrades gracefully (no crash) and renders', async (
   await expect(page.locator('main#content')).toBeVisible();
   expect(errors, `console errors on #config-health:\n${errors.join('\n')}`).toEqual([]);
 });
+
+test('rule editor saves a rule (saveRule writes to the sandbox HOME)', async ({ page }) => {
+  await page.goto(pageUrl('rule-editor'), { waitUntil: 'load' });
+  await expect.poll(() => page.locator('main#content > *').count(), { timeout: 15_000 }).toBeGreaterThan(0);
+
+  const RULE_MD = [
+    '---', 'id: smoke-rule', 'name: smoke rule', 'group: prompt-quality', 'severity: low',
+    'scope: requests', 'version: 1', 'tags: [custom]', 'thresholds:', '  maxLength: 30', '---', '',
+    '# Description', 'smoke rule', '', '# Filter', 'messageLength > 0', '',
+    '# Trigger', 'count > 0', '', '# When Triggered', '{{count}} of {{total}}.', '',
+    '# How to Improve', 'n/a', '', '# Examples', '"{{messageText}}"',
+  ].join('\n');
+
+  const ok = await page.evaluate(async (markdown) => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    return await new Promise<boolean>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string; data?: { ok?: boolean; filePath?: string; error?: string } };
+        if (f.type === 'response' && f.id === 'smoke-save-rule') {
+          window.removeEventListener('message', onMsg);
+          resolve(f.data?.ok === true && typeof f.data?.filePath === 'string' && !f.data?.error);
+        }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id: 'smoke-save-rule', method: 'saveRule', params: { markdown } });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve(false); }, 10_000);
+    });
+  }, RULE_MD);
+  expect(ok).toBe(true);
+});
+
+test('skills installs a skill (installSkill writes to the sandbox HOME)', async ({ page }) => {
+  await page.goto(pageUrl('skills'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="skills"]')).toHaveClass(/active/, { timeout: 15_000 });
+
+  const ok = await page.evaluate(async () => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    return await new Promise<boolean>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string; data?: { ok?: boolean; path?: string; error?: string } };
+        if (f.type === 'response' && f.id === 'smoke-install-skill') {
+          window.removeEventListener('message', onMsg);
+          resolve(f.data?.ok === true && typeof f.data?.path === 'string' && !f.data?.error);
+        }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id: 'smoke-install-skill', method: 'installSkill', params: { filename: 'smoke-skill.md', content: '# Smoke' } });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve(false); }, 10_000);
+    });
+  });
+  expect(ok).toBe(true);
+});
+
+test('level-up exports a summary (exportSummary writes to COACH_EXPORT_DIR)', async ({ page }) => {
+  await page.goto(pageUrl('level-up'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="level-up"]')).toHaveClass(/active/, { timeout: 15_000 });
+
+  const folder = await page.evaluate(async () => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    return await new Promise<string | null>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string; data?: { ok?: boolean; folder?: string; error?: string } };
+        if (f.type === 'response' && f.id === 'smoke-export') {
+          window.removeEventListener('message', onMsg);
+          resolve(f.data?.ok === true && !f.data?.error ? (f.data?.folder ?? null) : null);
+        }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id: 'smoke-export', method: 'exportSummary', params: {} });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve(null); }, 10_000);
+    });
+  });
+  expect(folder).toContain('.coach-exports'); // server-chosen sandbox dir, never the repo cwd
+});

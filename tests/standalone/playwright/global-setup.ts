@@ -27,7 +27,7 @@ export default async function globalSetup(): Promise<void> {
     fake.once('exit', (c) => reject(new Error(`fake-llm exited (${c}) before serving. stderr:\n${fbuf}`)));
   });
   const child = fork(CLI, ['--no-open', '--port', '7388'], {
-    env: { ...process.env, HOME: home, USERPROFILE: home, ANTHROPIC_API_KEY: 'smoke-test-key', COACH_LLM_BASE_URL: fakeUrl },
+    env: { ...process.env, HOME: home, USERPROFILE: home, ANTHROPIC_API_KEY: 'smoke-test-key', COACH_LLM_BASE_URL: fakeUrl, COACH_EXPORT_DIR: path.join(home, '.coach-exports') },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   const url = await new Promise<string>((resolve, reject) => {
