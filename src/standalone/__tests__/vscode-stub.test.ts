@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vscode from '../vscode-stub';
 import { callLlmJson, SCHEMA_CONTEXT_REVIEW } from '../../webview/panel-llm';
 
@@ -89,5 +92,89 @@ describe('callLlmJson OpenAI strict-mode self-heal through the stub lm (grilling
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string).response_format).toBeDefined();
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).response_format).toBeUndefined();
+  });
+});
+
+describe('write seam — Uri', () => {
+  it('Uri.file returns { fsPath, path } mirroring the input path', () => {
+    expect(vscode.Uri.file('/home/u/.agents/skills/x.md')).toEqual({
+      fsPath: '/home/u/.agents/skills/x.md',
+      path: '/home/u/.agents/skills/x.md',
+    });
+  });
+
+  it('Uri.joinPath honors a base carrying fsPath', () => {
+    expect(vscode.Uri.joinPath({ fsPath: '/base' }, 'a', 'b.md')).toEqual({
+      path: '/base/a/b.md',
+      fsPath: '/base/a/b.md',
+    });
+  });
+
+  it('Uri.joinPath honors a base carrying only path', () => {
+    expect(vscode.Uri.joinPath({ path: '/p' }, 'c.md')).toEqual({
+      path: '/p/c.md',
+      fsPath: '/p/c.md',
+    });
+  });
+
+  it('Uri.joinPath with an empty {} base still equals the joined parts (getDashboardHtml no-op regression guard)', () => {
+    // panel-html.ts:11 calls joinPath(extensionUri, 'dist','webview','app.js') with extensionUri = {}.
+    // The base-fix must drop the empty base so the result is byte-identical to the old impl.
+    expect(vscode.Uri.joinPath({}, 'dist', 'webview', 'app.js')).toEqual({
+      path: 'dist/webview/app.js',
+      fsPath: 'dist/webview/app.js',
+    });
+  });
+});
+
+describe('write seam — workspace', () => {
+  it('workspace.workspaceFolders is undefined (single-folder degrade)', () => {
+    expect(vscode.workspace.workspaceFolders).toBeUndefined();
+  });
+
+  it('workspace.fs.writeFile creates parent dirs (mkdir-p) and writes the bytes to uri.fsPath', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'coach-stub-'));
+    try {
+      const target = path.join(tmp, 'nested', 'deep', 'file.txt');
+      await vscode.workspace.fs.writeFile(vscode.Uri.file(target), Buffer.from('hello', 'utf8'));
+      expect(fs.existsSync(target)).toBe(true);
+      expect(fs.readFileSync(target, 'utf8')).toBe('hello');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('write seam — window + env', () => {
+  it('showOpenDialog returns COACH_EXPORT_DIR when set', async () => {
+    const saved = process.env.COACH_EXPORT_DIR;
+    process.env.COACH_EXPORT_DIR = '/tmp/exports';
+    try {
+      const folders = await vscode.window.showOpenDialog({ canSelectFolders: true });
+      expect(folders).toEqual([{ fsPath: '/tmp/exports', path: '/tmp/exports' }]);
+    } finally {
+      if (saved === undefined) delete process.env.COACH_EXPORT_DIR;
+      else process.env.COACH_EXPORT_DIR = saved;
+    }
+  });
+
+  it('showOpenDialog falls back to ~/.ai-engineer-coach/exports when COACH_EXPORT_DIR is unset', async () => {
+    const saved = process.env.COACH_EXPORT_DIR;
+    delete process.env.COACH_EXPORT_DIR;
+    try {
+      const expected = path.join(os.homedir(), '.ai-engineer-coach', 'exports');
+      const folders = await vscode.window.showOpenDialog({ canSelectFolders: true });
+      expect(folders).toEqual([{ fsPath: expected, path: expected }]);
+    } finally {
+      if (saved !== undefined) process.env.COACH_EXPORT_DIR = saved;
+    }
+  });
+
+  it('showInformationMessage resolves undefined (no button → never opens the folder)', async () => {
+    expect(await vscode.window.showInformationMessage('done', 'Open Folder')).toBeUndefined();
+  });
+
+  it('env.openExternal resolves true (provided for safety; never reached in export flow)', async () => {
+    expect(await vscode.env.openExternal({ fsPath: '/x', path: '/x' })).toBe(true);
   });
 });
