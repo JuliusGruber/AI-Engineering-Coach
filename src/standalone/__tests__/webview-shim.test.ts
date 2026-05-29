@@ -76,14 +76,15 @@ afterEach(() => {
 });
 
 describe('BANNER_WORTHY', () => {
-  it('contains the curated content-creation methods and excludes proactive ones', () => {
-    expect(BANNER_WORTHY.has('createSkill')).toBe(true);
-    expect(BANNER_WORTHY.has('installCatalogItem')).toBe(true);
-    expect(BANNER_WORTHY.has('triageCatalog')).toBe(true);
+  it('contains only the still-degraded methods after bucket D went live', () => {
+    expect(BANNER_WORTHY.has('createSkill')).toBe(true); // opens VS Code chat; still degraded
+    expect(BANNER_WORTHY.has('installCatalogItem')).toBe(true); // bucket B (write path)
     expect(BANNER_WORTHY.has('getRuleEditor')).toBe(true);
+    expect(BANNER_WORTHY.has('triageCatalog')).toBe(false); // now bridged & live (bucket D)
+    expect(BANNER_WORTHY.has('generateLearningQuiz')).toBe(false); // now bridged & live
     expect(BANNER_WORTHY.has('triageSkills')).toBe(false); // proactive → silent
     expect(BANNER_WORTHY.has('getStats')).toBe(false); // allowed, not disabled
-    expect(BANNER_WORTHY.size).toBe(10);
+    expect(BANNER_WORTHY.size).toBe(4);
   });
 });
 

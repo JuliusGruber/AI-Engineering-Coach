@@ -14,13 +14,15 @@ declare global {
   };
 }
 
-// Curated set: only these disabled methods trigger the roadmap banner. Everything
-// else disabled is silent (see docs-fork/specs/00-overview.md "Disabled-method UX").
+// Curated set: only these disabled methods trigger the roadmap banner. Everything else
+// disabled is silent (see docs-fork/specs/00-overview.md "Disabled-method UX"). Bucket D
+// went live: the Learning ×4, generateSkillContent, and triageCatalog methods are now
+// allowlisted/bridged, so the dispatcher never returns standalone-v1-disabled for them and
+// their banner branch is unreachable — removed here for hygiene. createSkill stays
+// (opens VS Code chat); installSkill/installCatalogItem are bucket B; getRuleEditor is the
+// deep-link route with no standalone editor.
 export const BANNER_WORTHY: ReadonlySet<string> = new Set([
-  'createSkill', 'generateSkillContent', 'generateLearningQuiz',
-  'generateLearningResources', 'generateCodeComparison',
-  'generateDidYouKnow', 'installSkill', 'installCatalogItem',
-  'triageCatalog', 'getRuleEditor',
+  'createSkill', 'installSkill', 'installCatalogItem', 'getRuleEditor',
 ]);
 
 // Disabled methods a page awaits as PRIMARY render data with no per-call fallback. A
