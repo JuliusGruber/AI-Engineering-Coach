@@ -201,7 +201,16 @@ function attachRpcServer(server: http.Server, deps: RpcDeps): WebSocketServer {
           socket.send(JSON.stringify({ type: 'response', id, data: { error: 'bad request envelope', code: 'bad-request' } }));
           return;
         }
-        const result = await dispatch(env.method, env.params, deps.current());
+        // emitEvent is per-socket (reviewProgress reaches the requesting socket only),
+        // so it is built here — not in deps.current(), which is socket-agnostic. Forwarded
+        // verbatim, distinct from broadcast (which fans out to all clients).
+        const ctx: DispatchContext = {
+          ...deps.current(),
+          emitEvent: (frame: Record<string, unknown>) => {
+            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
+          },
+        };
+        const result = await dispatch(env.method, env.params, ctx);
         socket.send(JSON.stringify(toResponse(env.id, result)));
       })();
     });
