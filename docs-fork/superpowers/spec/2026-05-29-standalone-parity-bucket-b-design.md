@@ -133,10 +133,11 @@ verbatim and leaves `dispatcher.ts`, `server.ts`, and `esbuild.mjs` unchanged.
 | Write-path policy | **On by default** (no gate) | The server is localhost + token-gated (`auth.ts`); every write is dir-scoped with the upstream traversal guards; matches the VS Code extension and keeps the dispatcher unchanged. The alternative (a `COACH_ALLOW_WRITES` gate + degraded-mode UX) adds plumbing for a threat the token gate already covers. |
 | Service-write mechanism | **Extend `vscode-stub.ts`** (`Uri.file`/`joinPath`/`workspace.fs`/dialogs) | One seam, zero edits to `panel-request-service.ts` or `summary-export-vscode.ts`; same pattern as D's `lm` stub. Rejected: reimplementing each handler natively in `src/standalone` (duplicates upstream logic + drift risk). |
 | Export mechanism | **Server-side dir-write**, reusing `exportSummaryFiles` via the stub | Returns the exact `{ ok, folder, markdownPath, jsonPath }` shape the frozen page expects → zero webview changes; reuses the vscode-free core builders through the existing wrapper; lit by the same `workspace.fs` seam as skill-install. The folder-picker degrades to a configured dir. |
-| Export dir | **`COACH_EXPORT_DIR` env, default `process.cwd()`** | The natural CLI analog of the extension's "pick a folder" (files land where `coach` was run); overridable for scripted use. |
+| Export dir | **`COACH_EXPORT_DIR` env, default `~/.ai-engineer-coach/exports/`** | A dedicated dir under the user's home (sibling to the existing `rules/` dir) so a default Export never pollutes the repo `coach` was launched in; the page still shows "Exported to <folder>". Overridable via the env for scripted use. (The stub has no folder picker, so the dir is written *unconditionally* on click — hence a non-cwd default.) |
 | `saveRule` exposure | **Allowlist as-is** (registry tier) | It already writes via Node `fs`; no stub needed. Trust recording no-ops (no store) until bucket C. |
 | `getRuleEditor` exposure | **Allowlist** (accept the graceful `require('vscode')` fallback) | `workspaceRoot` degrades to `undefined` → personal+builtin rule layers only; project layer arrives with bucket C. Unblocks both the Anti-Patterns page and the Rule Editor route. |
-| `testRuleLive` / `importRegistryRules` | **Allowlist for completeness** | Both are in the RPC map and bucket B's line-items but are not wired to any exposed page (`PAGE-RPC-AUDIT.md`); allowlisting is harmless and forward-looking. |
+| `testRuleLive` | **Allowlist (reached)** | Called by the rule-editor modal (`page-antipatterns-editor.ts:297`), which is routed from the `anti-patterns`/`rule-editor` routes (`app.ts:644-645` → `renderAntiPatterns` → `page-antipatterns.ts` imports the modal). Load-bearing, not forward-looking. |
+| `importRegistryRules` | **Allowlist (forward-only)** | Has **no caller anywhere in `src/`** (only the handler `panel-rpc.ts:1242` + its `rpc-types.ts` entry) — no standalone UI reaches it yet, so allowlisting exposes the method but ships no user-visible feature this bucket. Read-only / in-memory, so the marginal socket surface is negligible. |
 | `createSkill` | **Exclude** (stays degraded) | `panel-request-service.ts:295` opens VS Code Copilot chat (`workbench.action.chat.open`) — no standalone equivalent; not a write. Carried over from D. |
 | `reviewLocalRules` | **Exclude** (bucket C) | `panel-rpc.ts:852` calls `vscode.commands.executeCommand` for the trust quick-pick; reimplemented as a browser modal + standalone trust store in bucket C. |
 
@@ -176,11 +177,14 @@ consume `vscode` filesystem/dialog members the stub lacks. Add exactly those:
    / `Uint8Array`, which `fs.writeFile` accepts directly.
 4. **`workspace.workspaceFolders`** → `undefined`. Keeps `getRuleEditor:742`
    (`?.[0]?.uri.fsPath` short-circuits to `undefined`) and `exportSummaryFiles:33`
-   (`defaultUri = undefined`) degrading cleanly. (Adding `workspace` means `getRuleEditor`
-   no longer throws-then-catches; it reads `undefined` directly — same result.)
+   (`defaultUri = undefined`) degrading cleanly. (`getRuleEditor` reaches this via
+   `require('vscode')`, **not** the `import * as vscode` alias; whether that `require` resolves
+   to the stub or throws, the upstream `try/catch` at `panel-rpc.ts:743` yields
+   `workspaceRoot = undefined` either way — the stub member just makes the success path explicit,
+   it does not change the outcome.)
 5. **`window.showOpenDialog(opts)`** → `[{ fsPath: exportDir, path: exportDir }]` where
-   `exportDir = process.env.COACH_EXPORT_DIR || process.cwd()`. Always returns the dir, so
-   export never hits the `cancelled` branch (`exportSummaryFiles:45`).
+   `exportDir = process.env.COACH_EXPORT_DIR || path.join(os.homedir(), '.ai-engineer-coach', 'exports')`.
+   Always returns the dir, so export never hits the `cancelled` branch (`exportSummaryFiles:45`).
 6. **`window.showInformationMessage(...)`** → `Promise<undefined>` (no button) → the
    `if (action === 'Open Folder')` branch (`:64`) never fires. **`env.openExternal`** →
    harmless stub (never reached, provided for safety/future use).
@@ -234,7 +238,7 @@ through `dispatchServiceMethod` (`dispatcher.ts:53-55`), which builds a fresh
 **verbatim** through the stub:
 
 - Report built by the vscode-free `core/summary-export.ts` (unchanged).
-- `showOpenDialog` → `COACH_EXPORT_DIR || cwd`; `Uri.joinPath(folder, name)` → correct
+- `showOpenDialog` → `COACH_EXPORT_DIR || ~/.ai-engineer-coach/exports/`; `Uri.joinPath(folder, name)` → correct
   absolute paths (base-fix); `workspace.fs.writeFile` → Node `fs` writes `summary-*.md` and
   `summary-*.json`.
 - Returns `{ ok:true, folder, markdownPath, jsonPath }` — the page renders "Exported to
@@ -297,6 +301,10 @@ webview → WebSocket /rpc → dispatcher.dispatch()
   `undefined`); renders personal+builtin layers, empty pending list.
 - **Writes are on by default** — no degraded "writes disabled" path exists; the localhost
   token gate (`auth.ts`) plus the upstream dir-scoping/traversal guards are the controls.
+  Bucket B is the **first** standalone bucket to add disk writes: any client presenting the
+  64-hex token over `127.0.0.1` can now write to `~/.agents/skills`, `~/.ai-engineer-coach/rules`,
+  and the export dir — accepted as consistent with the localhost+token threat model (same gate
+  that already authorizes every read and LLM call).
 
 ### Write locations (transparency)
 
@@ -308,7 +316,7 @@ the localhost token gate and dir-scoped:
 | `saveRule` | `~/.ai-engineer-coach/rules/<safe-id>.md` | id sanitized (`panel-rpc.ts:823`) |
 | `installSkill` | `~/.agents/skills/<filename>` | rejects `..` / leading `/` (`:604`) |
 | `installCatalogItem` | `~/.agents/{skills,agents}/<slug>/<file>` (+ GitHub fetch) | host-allowlist (`:636`) + `..` checks (`:628/:649`) |
-| `exportSummary` | `COACH_EXPORT_DIR` or `process.cwd()` | server-chosen dir (no arbitrary path from the browser) |
+| `exportSummary` | `COACH_EXPORT_DIR` or `~/.ai-engineer-coach/exports/` | server-chosen dir (no arbitrary path from the browser) |
 
 ## Testing
 
@@ -316,7 +324,7 @@ the localhost token gate and dir-scoped:
   base with `fsPath`/`path`; **`Uri.joinPath({}, 'a', 'b')` still equals `'a/b'`** (the
   `getDashboardHtml` no-op regression guard); `workspace.fs.writeFile` creates parent dirs
   (mkdir-p) and writes bytes to `uri.fsPath`; `showOpenDialog` returns `COACH_EXPORT_DIR ||
-  cwd`; `showInformationMessage` resolves `undefined`.
+  ~/.ai-engineer-coach/exports/`; `showInformationMessage` resolves `undefined`.
 - **Unit — registry:** `saveRule` writes a parsed rule to a temp `HOME`'s
   `.ai-engineer-coach/rules/` and returns `{ ok:true, filePath }`; `saveRule` with no store
   does not throw on the trust step; `getRuleEditor` returns `layers` with
@@ -378,10 +386,10 @@ other once the seam exists):
 2. **Layer 2 — Registry tier:** allowlist the 7 rule/import methods in `v1-allowed.ts` +
    registry unit tests (`saveRule` write, `getRuleEditor` degrade, `getRulePreview`). Depends
    on nothing in Layer 1 (these don't use the stub fs seam). `getRuleEditor` reads
-   `workspace.workspaceFolders` — added in Layer 1 — but works regardless of ordering: with
-   the `workspace` stub absent its `require('vscode').workspace.workspaceFolders` throws and
-   the upstream `try/catch` (`panel-rpc.ts:743`) degrades `workspaceRoot` to `undefined`; with
-   it present the read returns `undefined` directly. Same result either way.
+   `workspace.workspaceFolders` through `require('vscode')` (not the `import * as vscode` alias)
+   — and works regardless of ordering: whether that `require` resolves to the stub (read returns
+   `undefined`) or fails to resolve / lacks `workspace` (throws), the upstream `try/catch`
+   (`panel-rpc.ts:743`) degrades `workspaceRoot` to `undefined`. Same result either way.
 3. **Layer 3 — Service tier:** allowlist `installSkill`/`installCatalogItem`/`exportSummary`
    in `v1-service-allowed.ts` + `BANNER_WORTHY`/`RESOLVE_EMPTY_WHEN_DISABLED` hygiene +
    integration/smoke. Depends on Layer 1 (the stub fs/dialog seam).

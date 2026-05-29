@@ -31,11 +31,12 @@ The fork is **additive-only**: `git diff upstream/main -- src/` must touch only 
 
 | File | Change |
 | --- | --- |
-| `vscode-stub.test.ts` | New describe blocks for the write seam (incl. the `{}`-base `joinPath` no-op regression guard). |
+| `vscode-stub.test.ts` | New describe blocks for the write seam (incl. the `{}`-base `joinPath` no-op regression guard); the `COACH_EXPORT_DIR`-unset fallback test asserts `~/.ai-engineer-coach/exports/`. |
 | `v1-allowed.test.ts` | Count `45 → 52` (two sites); flip `saveRule`/`getRuleEditor` membership; add the 7 new members. |
 | `v1-service-allowed.test.ts` | Count `9 → 12` (two sites); flip install/export membership. |
 | `webview-shim.test.ts` | `BANNER_WORTHY.size` `4 → 1`; repurpose the `RESOLVE_EMPTY` test to assert `size === 0`. |
-| `dispatcher.test.ts` | Add tier-routing cases (rule → registry; install/export → bridge; `reviewLocalRules`/`createSkill` still disabled). |
+| `dispatcher.test.ts` | **Task 2:** swap the stale `saveRule` disabled-exemplar → `reviewLocalRules`. **Task 7:** add tier-routing cases (rule → registry; install/export → bridge; `reviewLocalRules`/`createSkill` still disabled). |
+| `server.test.ts` | **Task 2:** swap the mocked `saveRule` label → `reviewLocalRules` (dispatch is mocked, so it still passes; the swap keeps the label honest now that `saveRule` is allowlisted). |
 
 **New — fork-owned tests:**
 
@@ -51,6 +52,7 @@ The fork is **additive-only**: `git diff upstream/main -- src/` must touch only 
 | --- | --- |
 | `tests/standalone/playwright/global-setup.ts` | Fork the smoke server with `COACH_EXPORT_DIR` inside the sandbox `home` so `exportSummary` writes nowhere real. |
 | `tests/standalone/playwright/smoke.spec.ts` | Add `saveRule`, `installSkill`, `exportSummary` smokes driven through the shim's outbound channel. |
+| `tests/standalone/integration/cli-rpc-lifecycle.test.ts` | **Task 2:** swap the disabled-method exemplar `saveRule` → `reviewLocalRules` (`saveRule` is now allowlisted → would return `data not ready`/`{ok:false}`, never the disabled gate). |
 
 **Unchanged — verified, do NOT touch:** `dispatcher.ts`, `server.ts`, `request-service-bridge.ts`, `esbuild.mjs`, and all upstream `src/` outside `src/standalone/`.
 
@@ -59,6 +61,8 @@ The fork is **additive-only**: `git diff upstream/main -- src/` must touch only 
 ## A note on test placement (`installCatalogItem`)
 
 The spec lists `installCatalogItem` under Integration "(base-URL/host shim or mocked `fetch`)". The handler hard-codes `https://raw.githubusercontent.com/github/awesome-copilot/main/${catalogPath}` (`panel-request-service.ts:634`) with **no env override**, and the integration harness *forks the built CLI as a separate process* — which cannot accept a Vitest `fetch` mock, and must not hit the live network in CI. Therefore `installCatalogItem` is verified **in-process** (Task 6) against the real handler + real stub with `vi.stubGlobal('fetch', …)`, which exercises the identical `fetch → workspace.fs.writeFile` path without a forked process or live GitHub call. The forked-CLI integration suite (Task 8) covers the two network-free writes (`installSkill`, `exportSummary`), which is what the booted harness can assert deterministically. This is a deliberate deviation from the spec's literal placement, made for robustness; the coverage is equivalent.
+
+**Coverage caveat (made explicit):** the *forked bundle* therefore never runs `installCatalogItem`'s `fetch → workspace.fs.writeFile` path end-to-end. That is acceptable because Task 8's `installSkill` drives the **same** `vscode-stub workspace.fs.writeFile` seam through the booted CLI — so "the seam is compiled into the shipped bundle and writes real files" is proven end-to-end; only `installCatalogItem`'s `fetch` wiring is exercised in-process only (Task 6).
 
 ---
 
@@ -145,12 +149,13 @@ describe('write seam — window + env', () => {
     }
   });
 
-  it('showOpenDialog falls back to process.cwd() when COACH_EXPORT_DIR is unset', async () => {
+  it('showOpenDialog falls back to ~/.ai-engineer-coach/exports when COACH_EXPORT_DIR is unset', async () => {
     const saved = process.env.COACH_EXPORT_DIR;
     delete process.env.COACH_EXPORT_DIR;
     try {
+      const expected = path.join(os.homedir(), '.ai-engineer-coach', 'exports');
       const folders = await vscode.window.showOpenDialog({ canSelectFolders: true });
-      expect(folders).toEqual([{ fsPath: process.cwd(), path: process.cwd() }]);
+      expect(folders).toEqual([{ fsPath: expected, path: expected }]);
     } finally {
       if (saved !== undefined) process.env.COACH_EXPORT_DIR = saved;
     }
@@ -177,6 +182,7 @@ Add Node imports at the top of `src/standalone/vscode-stub.ts` (after the existi
 
 ```typescript
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 ```
 
@@ -218,9 +224,11 @@ export const workspace = {
 
 export const window = {
   // No interactive folder picker in standalone: always return the configured export dir, so
-  // exportSummaryFiles never hits its `cancelled` branch (:45).
+  // exportSummaryFiles never hits its `cancelled` branch (:45). The default lands under the
+  // user's home (sibling to ~/.ai-engineer-coach/rules/) so a one-click export never pollutes
+  // the repo `coach` was launched in; COACH_EXPORT_DIR overrides it.
   async showOpenDialog(_opts?: unknown): Promise<Array<{ fsPath: string; path: string }>> {
-    const dir = process.env.COACH_EXPORT_DIR || process.cwd();
+    const dir = process.env.COACH_EXPORT_DIR || path.join(os.homedir(), '.ai-engineer-coach', 'exports');
     return [{ fsPath: dir, path: dir }];
   },
   // No button → exportSummaryFiles:64 `if (action === 'Open Folder')` never fires.
@@ -328,7 +336,9 @@ In `src/standalone/v1-allowed.ts`, add the seven methods to the `_inner` set and
   'explainOccurrence', 'generateRule', 'compileNlRule',
   // Bucket B — Rule Editor / Anti-Patterns / Import (registry tier). saveRule writes via Node
   // fs (works as-is; trust recording no-ops with no store). getRuleEditor accepts the graceful
-  // require('vscode') fallback (workspaceRoot → undefined → personal+builtin layers).
+  // require('vscode') fallback (workspaceRoot → undefined → personal+builtin layers). testRuleLive
+  // is reached by the rule-editor modal (page-antipatterns-editor.ts:297). importRegistryRules has
+  // no caller in src/ yet — allowlisted forward-only (exposes the method; no standalone UI hits it).
   'getRuleEditor', 'getRuleSource', 'getRulePreview',
   'saveRule', 'updateRuleThreshold', 'testRuleLive', 'importRegistryRules',
 ```
@@ -349,11 +359,28 @@ Update the file's top comment to reflect the new count and the bucket-B addition
 Run: `npx vitest run src/standalone/__tests__/v1-allowed.test.ts`
 Expected: PASS — size 52; all 7 members present; `calibrateRule`/`runRuleTests` still absent.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Repair the now-stale `saveRule` disabled-exemplars**
+
+Allowlisting `saveRule` turns it from a disabled method into a registry-routed one, which breaks three existing tests that used `saveRule` as the *disabled* exemplar. Swap each to `reviewLocalRules` — it is in neither allowlist, so it still returns `standalone-v1-disabled` at the tier-3 gate (`dispatcher.ts:59`), **before** the data-ready guard, making it a clean drop-in even when sent pre-`dataReady`:
+
+- `src/standalone/__tests__/dispatcher.test.ts` — in the `'blocks non-whitelisted method (no log line)'` test, change `dispatch('saveRule', {}, readyCtx)` → `dispatch('reviewLocalRules', {}, readyCtx)` and the expected `method: 'saveRule'` → `method: 'reviewLocalRules'`. The other assertions (`standalone-v1-disabled`, `errSpy` not called, `mockedGetRpcHandler` not called) hold unchanged.
+- `src/standalone/__tests__/server.test.ts` — in `'nests a disabled-method error inside data, with no sibling error field'`, swap the mocked label `saveRule` → `reviewLocalRules` at all three sites (the `mockResolvedValueOnce` `method`, the `client.send({ … method })`, and the `expect(data.method)`). Dispatch is mocked here, so the test already passes; the swap keeps the label honest now that `saveRule` is live.
+- `tests/standalone/integration/cli-rpc-lifecycle.test.ts` — in `'returns a data-nested error for a disabled method'`, change `wsRequest(ws, 'saveRule', { name: 'x' }, 'd1')` → `wsRequest(ws, 'reviewLocalRules', {}, 'd1')`, the expected `method: 'saveRule'` → `method: 'reviewLocalRules'`, and update the `// saveRule ∉ V1_ALLOWED …` comment to `reviewLocalRules`.
+
+All three edits stay inside `src/standalone/**` / `tests/standalone/**`, so the additive-only invariant (Task 10 Step 5, scoped to `-- src/`) is preserved.
+
+- [ ] **Step 6: Re-run the repaired unit suites**
+
+Run: `npx vitest run src/standalone/__tests__/dispatcher.test.ts src/standalone/__tests__/server.test.ts`
+Expected: PASS — both disabled-exemplar tests now key on `reviewLocalRules`. (The `cli-rpc-lifecycle.test.ts` swap is an integration test; it is verified in Task 8 / Task 10 Step 3.)
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/standalone/v1-allowed.ts src/standalone/__tests__/v1-allowed.test.ts
-git commit -m "feat(standalone): allowlist 7 rule/import methods on the registry tier (bucket B layer 2)"
+git add src/standalone/v1-allowed.ts src/standalone/__tests__/v1-allowed.test.ts \
+  src/standalone/__tests__/dispatcher.test.ts src/standalone/__tests__/server.test.ts \
+  tests/standalone/integration/cli-rpc-lifecycle.test.ts
+git commit -m "feat(standalone): allowlist 7 rule/import methods + repair saveRule disabled-exemplars (bucket B layer 2)"
 ```
 
 ---
@@ -813,7 +840,7 @@ git commit -m "test(standalone): pin installSkill/installCatalogItem contract th
 
 ### Task 7: Add dispatcher tier-routing cases
 
-Prove the routing the allowlists unlock: rule methods → registry tier; install/export → service-bridge tier; `reviewLocalRules` / `createSkill` stay disabled. `dispatcher.test.ts` already mocks `getRpcHandler` and `dispatchServiceMethod`, so these assert *which tier* fires.
+Prove the routing the allowlists unlock: rule methods → registry tier; install/export → service-bridge tier; `reviewLocalRules` / `createSkill` stay disabled. `dispatcher.test.ts` already mocks `getRpcHandler` and `dispatchServiceMethod`, so these assert *which tier* fires. (The stale `saveRule` disabled-exemplar in this file was already repaired in Task 2 Step 5, so this task is purely **additive** — it appends a new describe block.)
 
 **Files:**
 - Modify: `src/standalone/__tests__/dispatcher.test.ts`
@@ -961,7 +988,7 @@ describe('cli write path (bucket B)', () => {
 - [ ] **Step 3: Run the integration suite**
 
 Run: `npm run test:integration:standalone`
-Expected: PASS — the new `cli write path` tests plus all pre-existing integration tests green. (The suite is serialized — `fileParallelism: false` — so the new ports 7370/7371 won't clash.)
+Expected: PASS — the new `cli write path` tests plus all pre-existing integration tests green. (The suite is serialized — `fileParallelism: false` — so the new ports 7370/7371 won't clash.) `cli-rpc-lifecycle.test.ts`'s disabled-method exemplar was already swapped `saveRule` → `reviewLocalRules` in Task 2 Step 5, so it stays green now that `saveRule` is allowlisted.
 
 - [ ] **Step 4: Commit**
 
@@ -974,7 +1001,7 @@ git commit -m "test(standalone): integration for installSkill + exportSummary wr
 
 ### Task 9: Playwright browser smoke + sandbox the export dir
 
-Drive `saveRule` / `installSkill` / `exportSummary` through the shim's outbound channel (the established smoke pattern). First, point the smoke server's `COACH_EXPORT_DIR` at the sandbox `home` so `exportSummary` does not fall back to `process.cwd()` (the repo).
+Drive `saveRule` / `installSkill` / `exportSummary` through the shim's outbound channel (the established smoke pattern). First, point the smoke server's `COACH_EXPORT_DIR` at a known sandbox subdir so `exportSummary` writes to a predictable, teardown-cleaned location the smoke can assert on (the returned `folder` contains `.coach-exports`). (`HOME` is already the sandbox tmp dir, so the home-based default `~/.ai-engineer-coach/exports/` would also stay out of the repo — but pinning `COACH_EXPORT_DIR` is what makes the `.coach-exports` assertion deterministic.)
 
 **Files:**
 - Modify: `tests/standalone/playwright/global-setup.ts`
@@ -1158,7 +1185,7 @@ git commit -m "chore(standalone): bucket B verification pass (additive-only inva
 | Testing → Playwright smoke | Task 9 |
 | Testing → snapshot unchanged | Task 1 Step 5, Task 10 Step 1 |
 | Testing → pack | Task 10 Step 4 |
-| Test deltas (45→52, 9→12, banner 4→1, repurpose RESOLVE_EMPTY test) | Tasks 2, 4, 5 |
+| Test deltas (45→52, 9→12, banner 4→1, repurpose RESOLVE_EMPTY test; swap stale `saveRule`→`reviewLocalRules` exemplars in dispatcher/server/cli-rpc-lifecycle; export-dir fallback test → `~/.ai-engineer-coach/exports/`) | Tasks 1, 2, 4, 5 |
 | Invariant verification | Task 10 Steps 5–6 |
 
 **2. Placeholder scan** — no `TBD`/`later`/"handle edge cases"; every code step shows complete code; every command states expected output.
