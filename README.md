@@ -19,8 +19,6 @@ Analyze your AI coding assistant usage — any harness, one dashboard.
 
 ## What it does
 
-A fork of [microsoft/AI-Engineering-Coach](https://github.com/microsoft/AI-Engineering-Coach) that adds a **standalone browser UI** — the same dashboard runs as a local web app (`npm run serve`), no VS Code required.
-
 AI Engineer Coach reads your local AI session logs and turns them into actionable insights — no data leaves your machine.
 
 - **Track progress** -- practice scores, weekly trends, daily activity charts
@@ -51,30 +49,30 @@ AI Engineer Coach reads your local AI session logs and turns them into actionabl
 
 ## Quick Start
 
+The dashboard runs as a standalone local web app — no VS Code required.
+
 ```bash
-git clone https://github.com/microsoft/ai-engineering-coach.git
-cd ai-engineering-coach
+git clone https://github.com/JuliusGruber/AI-Engineering-Coach.git
+cd AI-Engineering-Coach
 npm install
-npm run package
+npm run build      # bundle the standalone server -> dist/standalone/cli.js
+npm run serve      # start the dashboard and open it in your browser
 ```
 
-Then install the `.vsix`:
+`npm run serve` launches a local server on `http://127.0.0.1:7331` (bound to localhost only), parses your local AI session logs, and opens the dashboard in your default browser. Navigate pages from the sidebar and filter by workspace or harness.
 
-**macOS / Linux**
+> The dashboard URL contains an access token — treat it as a secret. All state lives under `~/.ai-engineer-coach/`.
 
-```bash
-code --install-extension ai-engineer-coach-*.vsix
-```
+**Options** — pass them after `--`, e.g. `npm run serve -- --port 8080 --no-open`:
 
-**Windows / PowerShell**
+| Flag | Description |
+|------|-------------|
+| `--port <n>` | Listen on port `n` (default `7331`; retries `+1..+9` on collision) |
+| `--no-open` | Don't open a browser; just print the URL |
+| `--rotate-token` | Generate a fresh access token before booting |
+| `--log-file <path>` | Append diagnostic logs to a file |
 
-```powershell
-code --install-extension (Get-ChildItem . -Filter 'ai-engineer-coach-*.vsix' | Select-Object -First 1).FullName
-```
-
-1. Open the command palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-2. Run **AI Engineer Coach: Open Dashboard**
-3. Navigate pages from the sidebar, filter by workspace or harness
+**Optional — AI features.** Skill discovery, the rule compiler, learning quizzes, and context review call an LLM. Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running `npm run serve` to enable them; without a key those features degrade gracefully and the rest of the dashboard is unaffected.
 
 ---
 
@@ -124,10 +122,10 @@ code --install-extension (Get-ChildItem . -Filter 'ai-engineer-coach-*.vsix' | S
 
 ## Privacy
 
-- **Read-only** — the extension never modifies your session files
+- **Read-only** — AI Engineer Coach never modifies your session files
 - **Local analysis** — all parsing and analytics run entirely on your machine
-- **No proprietary telemetry** — the extension does not phone home or collect usage data
-- **Optional AI features** — some features (rule compiler, skill finder, context review) use the VS Code built-in Copilot language model API when explicitly invoked by the user
+- **No proprietary telemetry** — it does not phone home or collect usage data
+- **Optional AI features** — some features (rule compiler, skill finder, learning quizzes, context review) call the LLM provider you configure via `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and only when you explicitly invoke them; the relevant prompts and code are sent to that provider. Without a key they degrade gracefully.
 
 ---
 
