@@ -158,3 +158,71 @@ test('rule editor generates a natural-language rule (generateRule degrades grace
   expect(resolved).toBe(true);
   expect(errors, `console errors on #rule-editor:\n${errors.join('\n')}`).toEqual([]);
 });
+
+test('learning center generates a quiz (service bridge + fake provider)', async ({ page }) => {
+  await page.goto(pageUrl('level-up'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="level-up"]')).toHaveClass(/active/, { timeout: 15_000 });
+
+  const ok = await page.evaluate(async () => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    return await new Promise<boolean>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string; data?: { error?: string; questions?: unknown[] } };
+        if (f.type === 'response' && f.id === 'smoke-quiz') {
+          window.removeEventListener('message', onMsg);
+          resolve(!f.data?.error && Array.isArray(f.data?.questions) && f.data.questions.length > 0);
+        }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id: 'smoke-quiz', method: 'generateLearningQuiz', params: { difficulty: 'easy', languages: ['ts'] } });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve(false); }, 15_000);
+    });
+  });
+  expect(ok).toBe(true);
+});
+
+test('skill finder discovers + triages a catalog (service bridge + fake provider)', async ({ page }) => {
+  await page.goto(pageUrl('skills'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="skills"]')).toHaveClass(/active/, { timeout: 15_000 });
+
+  const ok = await page.evaluate(async () => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    const call = (id: string, method: string, params: unknown) => new Promise<{ data?: { error?: string; items?: unknown[] } }>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string; data?: { error?: string; items?: unknown[] } };
+        if (f.type === 'response' && f.id === id) { window.removeEventListener('message', onMsg); resolve(f); }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id, method, params });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve({}); }, 15_000);
+    });
+    const cat = await call('smoke-triage', 'triageCatalog', { items: [{ id: 'demo-skill', title: 'Demo Skill', kind: 'skill', description: 'd', category: 'c' }] });
+    return !cat.data?.error && Array.isArray(cat.data?.items) && cat.data.items.length > 0;
+  });
+  expect(ok).toBe(true);
+});
+
+test('context health review degrades gracefully (no crash) and renders', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', (e) => errors.push(String(e)));
+
+  await page.goto(pageUrl('config-health'), { waitUntil: 'load' });
+  await expect(page.locator('.nav-links a[data-page="config-health"]')).toHaveClass(/active/, { timeout: 15_000 });
+
+  const settled = await page.evaluate(async () => {
+    const api = (window as unknown as { acquireVsCodeApi: () => { postMessage: (m: unknown) => void } }).acquireVsCodeApi();
+    return await new Promise<boolean>((resolve) => {
+      const onMsg = (ev: MessageEvent) => {
+        const f = ev.data as { type?: string; id?: string };
+        if (f.type === 'response' && f.id === 'smoke-review') { window.removeEventListener('message', onMsg); resolve(true); }
+      };
+      window.addEventListener('message', onMsg);
+      api.postMessage({ type: 'request', id: 'smoke-review', method: 'reviewContextFiles', params: { workspaceIds: ['does-not-exist'] } });
+      setTimeout(() => { window.removeEventListener('message', onMsg); resolve(false); }, 15_000);
+    });
+  });
+  expect(settled).toBe(true);
+  await expect(page.locator('main#content')).toBeVisible();
+  expect(errors, `console errors on #config-health:\n${errors.join('\n')}`).toEqual([]);
+});

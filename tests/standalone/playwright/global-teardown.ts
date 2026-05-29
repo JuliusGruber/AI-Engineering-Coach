@@ -6,8 +6,9 @@ const RUNTIME = path.join(__dirname, '.runtime.json');
 
 export default async function globalTeardown(): Promise<void> {
   if (!fs.existsSync(RUNTIME)) return;
-  const { pid, home } = JSON.parse(fs.readFileSync(RUNTIME, 'utf8')) as { pid: number; home: string };
+  const { pid, fakePid, home } = JSON.parse(fs.readFileSync(RUNTIME, 'utf8')) as { pid: number; fakePid?: number; home: string };
   try { process.kill(pid, 'SIGINT'); } catch { /* already gone */ }
+  if (fakePid) { try { process.kill(fakePid, 'SIGKILL'); } catch { /* already gone */ } }
   await new Promise((r) => setTimeout(r, 500)); // let close() clear server-state.json
   try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* ignore */ }
   try { fs.rmSync(RUNTIME, { force: true }); } catch { /* ignore */ }
