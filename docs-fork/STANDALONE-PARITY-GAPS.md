@@ -78,24 +78,47 @@ All four exposed in the standalone build. Note: only two were genuinely
   modal with a standalone-side store (e.g. a `trust.json`). **Med** (tied to
   project rules).
 
-## D. LLM-backed tier — blocked on a standalone model provider
+## D. LLM-backed tier — SHIPPED (2026-05-27)
 
-- **LLM provider wiring** *(enabler)* — v1 dropped VS Code's built-in Copilot
-  LM API with no replacement. An `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` path
-  unblocks everything below. **Med–High**.
-- **Learning Center** — quizzes, code-comparison rounds, did-you-know.
-  `generateLearningQuiz` / `generateCodeComparison` / `generateDidYouKnow` /
-  `generateLearningResources`. No read-only path. **After enabler**.
-- **Skill discovery / triage / generation** — `discoverCatalog` /
-  `triageCatalog` / `triageSkills` + `generateSkillContent` / `createSkill`.
-  The Skill Finder page (`page-skills.ts`) drives discovery via `discoverCatalog`
-  (LLM, line 352) and `triageCatalog` (line 366), both disabled in standalone —
-  so it has **no browse-only fallback** today. (`getRegistryCatalog` is
-  allowlisted but called by no page.) **After enabler**.
-- **AI context-file review** — `reviewContextFiles` in Context Health
-  (scores / checklist / map already work). **After enabler**.
-- **NL rule features** — `compileNlRule`, `generateRule`, `explainOccurrence`.
-  **After enabler**.
+The "LLM provider wiring" enabler plus all four feature groups are exposed in the
+standalone build. The four groups were NOT uniform: they split across two delivery
+mechanisms behind a single seam (the `vscode` stub).
+
+- **Enabler** ✅ — `vscode.lm` is implemented in `src/standalone/vscode-stub.ts` over a new
+  `src/standalone/llm-provider.ts` (Anthropic/OpenAI, non-streaming single-fetch, auto-detected
+  by `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; `COACH_LLM_MODEL` / `COACH_LLM_BASE_URL` /
+  `COACH_LLM_MAX_TOKENS` overrides). One seam lights up BOTH `panel-llm.ts` and
+  `core/rule-compiler.ts` with zero edits to either.
+- **NL-rule features** ✅ — `explainOccurrence` / `generateRule` / `compileNlRule` are
+  registry handlers, now allowlisted (`V1_ALLOWED` 42 → 45). `compileNlRule` degrades to a
+  heuristic template offline (never errors); `generateRule` has a template fallback.
+- **Learning Center** ✅ — `generateLearningQuiz` / `generateCodeComparison` /
+  `generateDidYouKnow` / `generateLearningResources`, exposed via the new
+  `PanelRequestService` bridge (`src/standalone/request-service-bridge.ts`, gated by
+  `V1_SERVICE_ALLOWED`).
+- **Skill discovery / triage / generation** ✅ — `discoverCatalog` / `triageCatalog` /
+  `triageSkills` / `generateSkillContent` via the same bridge. `createSkill` stays degraded
+  (it opens VS Code chat — not an LLM call).
+- **AI context-file review** ✅ — `reviewContextFiles` via the bridge; its `reviewProgress`
+  event is forwarded over WebSocket to the requesting socket (per-socket `emitEvent`).
+
+**Out of scope (documented degradations, not regressions):** `createSkill` (VS Code chat);
+`installSkill` / `installCatalogItem` / `exportSummary` (bucket B write path);
+`getWorkspaceDeps` / `getSdlc*` (bucket E — the bridge enables these later but they are not
+allowlisted here). With no API key, LLM-backed methods surface a standalone hint — *"Set
+ANTHROPIC_API_KEY or OPENAI_API_KEY to enable AI features."* (the upstream "No language model
+available … Copilot" string is rewritten by `src/standalone/llm-unavailable.ts`); `compileNlRule`
+and `generateRule` silently fall back to a heuristic/template instead. `generateRule` is reachable
+via the anti-patterns "New Rule" modal, but its Save/Test actions stay degraded (write path /
+`runRuleTests` not allowlisted).
+
+**Data flow & configuration (transparency).** AI features send your prompts, code snippets, and —
+for context review — your instruction-file contents (`CLAUDE.md` and friends) to the configured LLM
+provider; this is the same data flow as the VS Code extension's Copilot path. Provider and key are
+auto-detected from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. `COACH_LLM_BASE_URL` redirects requests
+(carrying your API key) to that host — intended for proxies and local models, so point it only at a
+host you trust. `COACH_LLM_MODEL` / `COACH_LLM_MAX_TOKENS` / `COACH_LLM_TIMEOUT_MS` tune the model,
+output ceiling, and request timeout.
 
 ## E. Agentic SDLC — needs the dropped data service rebuilt
 
