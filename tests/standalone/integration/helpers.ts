@@ -112,3 +112,16 @@ export function wsWaitFor(ws: WebSocket, type: string, timeoutMs = 15_000): Prom
     ws.on('message', onMsg);
   });
 }
+
+// Resolve on the first event frame ({type:'event', method}) for the given method. Distinct
+// from wsWaitFor (which keys on frame.type) — event frames carry no id, so this matches method.
+export function wsWaitForEvent(ws: WebSocket, method: string, timeoutMs = 15_000): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { ws.off('message', onMsg); reject(new Error(`no ${method} event in ${timeoutMs}ms`)); }, timeoutMs);
+    const onMsg = (raw: Buffer): void => {
+      const f = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (f.type === 'event' && f.method === method) { clearTimeout(timer); ws.off('message', onMsg); resolve(f); }
+    };
+    ws.on('message', onMsg);
+  });
+}

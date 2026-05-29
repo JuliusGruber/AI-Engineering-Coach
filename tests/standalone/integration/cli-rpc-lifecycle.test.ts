@@ -4,7 +4,7 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { bootCli, makeTmpHome, stopCli, wsConnect, wsRequest, wsWaitFor, type Booted, CLI } from './helpers';
+import { bootCli, makeTmpHome, stopCli, wsConnect, wsRequest, wsWaitFor, wsWaitForEvent, type Booted, CLI } from './helpers';
 import { createFakeLlmServer } from '../fixtures/fake-llm-server.mjs';
 import type { AddressInfo } from 'node:net';
 
@@ -197,5 +197,79 @@ describe('cli rpc + lifecycle', () => {
     } finally {
       await new Promise<void>((r) => fake.close(() => r()));
     }
+  });
+
+  it('generateLearningQuiz returns questions via the service bridge + fake provider', async () => {
+    const fake = createFakeLlmServer();
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => r()));
+    const port = (fake.address() as AddressInfo).port;
+    try {
+      const home = makeTmpHome();
+      const b = track(
+        await bootCli(home, ['--port', '7364'], 20_000, { ANTHROPIC_API_KEY: 'test-key', COACH_LLM_BASE_URL: `http://127.0.0.1:${port}` }),
+        home,
+      );
+      const ws = await wsConnect(b);
+      await wsWaitFor(ws, 'dataReady');
+      const quiz = await wsRequest(ws, 'generateLearningQuiz', { difficulty: 'easy', languages: ['ts'] }, 'q1');
+      const cat = await wsRequest(ws, 'triageCatalog', { items: [{ id: 'demo-skill', title: 'Demo Skill', kind: 'skill', description: 'd', category: 'c' }] }, 'c1');
+      ws.close();
+
+      expect((quiz.data as { error?: string }).error).toBeUndefined();
+      expect((quiz.data as { questions?: unknown[] }).questions?.length).toBeGreaterThan(0);
+      expect((cat.data as { error?: string }).error).toBeUndefined();
+      expect((cat.data as { items?: unknown[] }).items?.length).toBeGreaterThan(0);
+    } finally {
+      fake.close();
+    }
+  });
+
+  it('reviewContextFiles forwards a reviewProgress event to the requesting socket', async () => {
+    const fake = createFakeLlmServer();
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => r()));
+    const port = (fake.address() as AddressInfo).port;
+    try {
+      const home = makeTmpHome();
+      const b = track(
+        await bootCli(home, ['--port', '7365'], 20_000, { ANTHROPIC_API_KEY: 'test-key', COACH_LLM_BASE_URL: `http://127.0.0.1:${port}` }),
+        home,
+      );
+      const ws = await wsConnect(b);
+      await wsWaitFor(ws, 'dataReady');
+      const eventSeen = wsWaitForEvent(ws, 'reviewProgress');
+      await wsRequest(ws, 'reviewContextFiles', { workspaceIds: ['does-not-exist'] }, 'r1');
+      const evt = await eventSeen;
+      ws.close();
+
+      expect(evt.type).toBe('event');
+      expect(evt.method).toBe('reviewProgress');
+      expect((evt.data as { phase?: string }).phase).toBe('start');
+    } finally {
+      fake.close();
+    }
+  });
+
+  it('generateLearningQuiz returns a standalone (non-Copilot) error with no LLM key (grilling decision 2)', async () => {
+    const home = makeTmpHome();
+    const b = track(await bootCli(home, ['--port', '7366']), home);
+    const ws = await wsConnect(b);
+    await wsWaitFor(ws, 'dataReady');
+    const res = await wsRequest(ws, 'generateLearningQuiz', { difficulty: 'easy', languages: ['ts'] }, 'nokey1');
+    ws.close();
+    const data = res.data as { error?: string };
+    expect(data.error).toContain('ANTHROPIC_API_KEY');
+    expect(data.error).not.toMatch(/Copilot/i);
+  });
+
+  it('explainOccurrence routes through the registry and never leaks the upstream Copilot string (grilling decision 6)', async () => {
+    const home = makeTmpHome();
+    const b = track(await bootCli(home, ['--port', '7367']), home);
+    const ws = await wsConnect(b);
+    await wsWaitFor(ws, 'dataReady');
+    const res = await wsRequest(ws, 'explainOccurrence', { ruleId: 'demo', sessionId: 'demo' }, 'exp1');
+    ws.close();
+    const data = res.data as { error?: string };
+    expect(data.error ?? '').not.toMatch(/Copilot/i);
+    expect(data.error ?? '').not.toMatch(/No language model available/i);
   });
 });
