@@ -122,3 +122,36 @@ describe('bucket-E SDLC bridge — serve-then-parse (parseResult undefined → e
     expect(res).toEqual({ ok: true, data: { repos: [] } });
   });
 });
+
+describe('bucket-E SDLC bridge — .git/config credential safety', () => {
+  it('yields null (not a stripped owner/repo) for a credentialed remote, leaking nothing', async () => {
+    const root = tmpDir();
+    fs.writeFileSync(path.join(root, 'package.json'), '{}');
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.git', 'config'),
+      '[remote "origin"]\n\turl = https://user:ghp_secret@github.com/owner/repo.git\n',
+    );
+    const parseResult = makeParseResult({ workspaces: [{ id: 'ws1', name: 'demo', path: root }] });
+    const res = await dispatchServiceMethod('getSdlcRepoScan', {}, ctx(parseResult));
+    const repos = data(res).repos as Array<{ remote: string | null }>;
+    expect(repos[0].remote).toBeNull();
+    const json = JSON.stringify(res);
+    expect(json).not.toContain('ghp_secret');
+    expect(json).not.toContain('user:');
+  });
+
+  it('extracts owner/repo from a clean https github remote (regex still works)', async () => {
+    const root = tmpDir();
+    fs.writeFileSync(path.join(root, 'package.json'), '{}');
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.git', 'config'),
+      '[remote "origin"]\n\turl = https://github.com/owner/repo.git\n',
+    );
+    const parseResult = makeParseResult({ workspaces: [{ id: 'ws1', name: 'demo', path: root }] });
+    const res = await dispatchServiceMethod('getSdlcRepoScan', {}, ctx(parseResult));
+    const repos = data(res).repos as Array<{ remote: string | null }>;
+    expect(repos[0].remote).toBe('owner/repo');
+  });
+});
