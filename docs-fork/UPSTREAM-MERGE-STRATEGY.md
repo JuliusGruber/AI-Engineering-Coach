@@ -1,10 +1,14 @@
 # Continuous Upstream Sync for an Additive-Only Fork: Strategy + Skill Design
 
-> Derived 2026-05-30 against `upstream/main` = `3a41450`, merge-base `1fef41a`
-> (HEAD 67 commits behind). Produced by a codebase-grounded + web-researched,
-> adversarially-verified workflow. Load-bearing claims (merge-base authorship
-> diff, commit `44e9532`, the esbuild redirect plugin) re-verified by hand
-> against the live repo.
+> Originally derived 2026-05-30 against `upstream/main` = `3a41450` from a
+> codebase-grounded + web-researched, adversarially-verified workflow.
+> **Reconciled 2026-05-30 to the live `merging-upstream` skill**, which evolved past the
+> original design in three ways — all reflected below: (1) the fork carries **zero** drift —
+> the former `44e9532` core edits were reverted (commit `adcb185`); (2) the skill **lands on
+> local `main`** by fast-forward, it does not push or open a PR; (3) the parity report is an
+> **append-only feature-bucket ledger** with **no "merge debt" bucket**. HEAD is now `0` behind
+> (merge-base == `upstream/main`). The live source of truth is the skill at
+> `.claude/skills/merging-upstream/`; this doc is the rationale.
 
 ## 1. TL;DR
 
@@ -12,7 +16,7 @@
 - **Enforce the invariant against the merge-base, not `upstream/main`.** The reliable authorship gate is `git diff --name-only $(git merge-base HEAD upstream/main) HEAD -- src/ ':(exclude)src/standalone/'` — it must be empty. Gating on `upstream/main` directly reports ~16 false positives (behind-upstream noise).
 - **Behavior overrides live in the build, not in core.** `esbuild.mjs:19-49` redirects `core/constants` → `src/standalone/standalone-constants.ts` to flip `FF_TOKEN_REPORTING_ENABLED` for standalone bundles only, so `src/core/constants.ts:127` stays byte-identical to upstream. Any future override follows this pattern — never edit core.
 - **Parity gaps are a set-difference + four secondary signals.** `unexposed = keyof ExtensionMethodMap \ (V1_ALLOWED ∪ V1_SERVICE_ALLOWED ∪ keys(STANDALONE_NATIVE))`, then layer FF-gate / call-site / deep-link / write-path tags. The mechanical diff regenerates the bulk of `docs-fork/STANDALONE-PARITY-GAPS.md`; bucketing/difficulty stay human.
-- **Ship one project skill `merging-upstream`** with low-freedom helper scripts for the dangerous git plumbing and high-freedom prose for triage. It never auto-pushes, never auto-reverts the fork's deliberate edits (the `44e9532` core edits), and surfaces conflicts for a human.
+- **Ship one project skill `merging-upstream`** with low-freedom helper scripts for the dangerous git plumbing and high-freedom prose for triage. It **never pushes** and **never auto-merges onto `main`** (it lands on a `sync/upstream-<date>` branch; `main` advances only via an explicit, separately-approved fast-forward `land`, never a push or PR), **never *silently* reverts** a fork edit, and surfaces conflicts for a human. The fork carries **zero** drift outside `src/standalone/`.
 
 ---
 
@@ -42,7 +46,7 @@ git config --global rerere.enabled true   # reuse recorded conflict resolutions 
 
 ```bash
 git fetch upstream
-git rev-parse --verify upstream/main          # = 3a41450 at time of analysis; HEAD is 67 behind
+git rev-parse --verify upstream/main          # = 3a41450; HEAD now 0 behind (merge-base == upstream/main)
 
 git switch -c sync/upstream-$(date +%Y%m%d)   # NEVER merge onto main directly
 git merge --no-ff upstream/main               # may stop on conflicts
@@ -57,26 +61,34 @@ git merge --continue
 - A conflict in a **generated/lock-style file** that upstream also touches → `-X theirs`/`-X ours` is acceptable for that one path (deterministic side wins). Do **not** blanket-apply it.
 - A conflict in **any other core file** → this is accidental drift; resolve toward upstream and then verify the file ends byte-identical (§3 gate).
 
-### 2.4 Remediating the already-drifted files
+### 2.4 Drift outside `src/standalone/` — currently zero
 
-The naive command (`git diff upstream/main -- src/`) lists files, but the **merge-base** diff shows only the fork's **2 deliberate edits** (both commit `44e9532`):
+The invariant is **zero** fork-authored drift in shared `src/`, and the fork carries none — the
+merge-base diff is empty:
 
 ```bash
 base=$(git merge-base HEAD upstream/main)
-git diff --name-only "$base" HEAD -- src/ ':(exclude)src/standalone/'
-# -> src/core/metric-engine.ts
-#    src/core/parser-codex.test.ts
-for f in src/core/metric-engine.ts src/core/parser-codex.test.ts; do
-  echo "== $f =="; git log --oneline "$base"..HEAD -- "$f"
-done
+git diff --name-only "$base" HEAD -- src/ ':(exclude)src/standalone/'   # -> (empty)
 ```
 
-| File | Attribution | Remediation |
-|---|---|---|
-| `src/core/metric-engine.ts` | **Deliberate fork edit**, commit `44e9532` — pins `toLocaleString('en-US')` so `serializeCalibration` is locale-stable; without it `metric-engine.test.ts` goes red on non-en-US locales (this machine's Node default formats `1234` as `1 234`, not `1,234`). | **Upstream it** (PR to microsoft/AI-Engineering-Coach). Do **not** revert — it turns that test red locally. |
-| `src/core/parser-codex.test.ts` | **Deliberate fork edit**, commit `44e9532` — 120s timeout on the >`MAX_FILE_SIZE` Codex test; the global `testTimeout` is 15s but the test needs ~60s on Windows/slow disks. | **Upstream it** or keep. Do **not** revert — it times the test out locally. |
+The two edits this section once tracked — `src/core/metric-engine.ts` (`toLocaleString('en-US')`
+locale pin) and `src/core/parser-codex.test.ts` (120s `>MAX_FILE_SIZE` timeout), both commit
+`44e9532` — were **reverted byte-identical to upstream** (commit `adcb185`) to make the invariant
+absolute. The accepted cost: `metric-engine.test.ts:435` goes red on non-en-US locales (this
+machine's Node formats `1234` as `1 234`, not `1,234`) and the codex large-file test can time out
+on Windows/slow disks. Those are **upstream test-robustness gaps to PR upstream**, not fork-carried
+edits.
 
-The webview files named only in the literal `upstream/main` diff (`panel.ts`, `page-burndown.ts`, `panel-sidebar.ts`) have an **empty** `$base..HEAD` log — they are behind/merge-resolved noise, **not** fork authorship. Do not touch them as "invariant breaches." After upstreaming the `44e9532` edits and re-merging, the merge-base diff returns empty and the invariant holds. **There is no fork code sitting in the wrong directory** — the standalone strategy is structurally clean; the drift is incidental.
+**If `drift-gate.sh` ever flags a path again**, remediate before landing — never carry it:
+
+| Classification | Signal | Remediation |
+|---|---|---|
+| **Deliberate** | named in `git log $base..HEAD -- <path>` | a behavior override goes behind the build seam (§3.3); a portable bug fix is upstreamed (PR to microsoft/AI-Engineering-Coach); otherwise revert to upstream and accept upstream's behavior locally. Surface the choice — never *silently* revert a real fix. |
+| **Merge-resolution noise** | empty `$base..HEAD` log | re-merge / `git checkout upstream/main -- <path>`; not an authorship breach. The webview files that show up only in the naive `git diff upstream/main` (`panel.ts`, `page-burndown.ts`, `panel-sidebar.ts`) are this — behind/merge-resolved noise, not fork authorship. |
+
+**There is no fork code sitting in the wrong directory** — the standalone strategy is structurally
+clean, and `guarded-merge.sh land` refuses to advance `main` while any drift remains (drift-gate
+exit 1 *or* 2).
 
 ---
 
@@ -158,7 +170,7 @@ STEP 4  tag FF     grep FF_TOKEN_REPORTING_ENABLED; assert esbuild onResolve red
 STEP 5  tag vscode/write  static-grep each gap method's upstream handler for `vscode.` vs fs/write
 STEP 6  tag deeplink   scan standalone-html.ts + upstream nav for routes with no nav <li>
 STEP 7  degradations   grep src/webview/page-*.ts for each gap method's postMessage call site → (page, method, file:line)
-STEP 8  bucket F    git diff --stat <base> HEAD -- src/ ':(exclude)src/standalone/' ; non-empty = merge debt
+STEP 8  drift gate  git diff --stat <base> HEAD -- src/ ':(exclude)src/standalone/' ; MUST be empty (sync status, never a parity bucket)
 STEP 9  banner     write "Derived against <base>, re-verified against <head>"
 ```
 
@@ -188,11 +200,11 @@ loadModelBudgets   (rpc-types.ts:138)
 
 ### 4.5 What stays human
 
-Bucket A–F assignment, difficulty/severity tags (`Med`/`Hard`/`HIGH`), portability (shimmable vs fundamentally vscode-only), the scope-exclusion list (`src/chat/*`, `src/mcp/*`, devcontainer/CI/CSP), and all Effect/Priority prose. The skill **proposes** buckets from the auto-signals; a human finalizes. **Bucket F (merge debt) is invisible to the allowlist diff** — it needs the STEP 8 git diff vs merge-base. Run **both** derivations.
+Bucket assignment (the ledger is **append-only** — A–E today; a new lettered bucket per newly-surfaced upstream **feature**, never renumbered or deleted, marked `SHIPPED` in place when implemented), difficulty/severity tags (`Med`/`Hard`/`HIGH`), portability (shimmable vs fundamentally vscode-only), the scope-exclusion list (`src/chat/*`, `src/mcp/*`, devcontainer/CI/CSP), and all Effect/Priority prose. The skill **proposes** buckets from the auto-signals; a human finalizes. **There is no "merge debt" bucket** — how far behind `upstream/main` the fork is, is a *sync status* (the STEP 8 drift gate, which must be empty, + `fetch-upstream.sh`'s behind count), never a parity gap. Genuinely **new non-RPC** upstream functionality (invisible to the allowlist diff) is caught by a features-only scan of `git diff <base> upstream/main` — excluding bug fixes, refactors, dep bumps, tests, infra, VS Code-only surfaces — and appended as a new bucket.
 
 ### 4.6 Regenerating the doc
 
-Render gap list + auto-tags + degradations table + staleness banner; leave bucket-letter, difficulty, and Effect/Priority as `TODO` placeholders. **Staleness trigger:** the doc's baseline is `abc0a6c`, **67 commits behind** `upstreamHead 3a41450`; if `git rev-parse upstream/main` ≠ the doc's derived SHA, regenerate. Always read `rpc-types.ts` from `git show upstream/main:` so the fork's own additive edits don't fold into the universe.
+Render gap list + auto-tags + degradations table + staleness banner; leave bucket-letter, difficulty, and Effect/Priority as `TODO` placeholders. **Staleness trigger:** the live parity doc is derived against the current `upstream/main` (now `3a41450`, HEAD `0` behind, merge-base == `upstream/main`); if `git rev-parse upstream/main` ≠ the doc's derived SHA, regenerate. Always read `rpc-types.ts` from `git show upstream/main:` so the fork's own additive edits don't fold into the universe.
 
 ---
 
@@ -204,7 +216,7 @@ Project skill, committed to the fork so it is versioned next to the code it guar
 .claude/skills/merging-upstream/
 ├── SKILL.md
 ├── reference.md            # the additive-only invariant in detail (TOC if >100 lines)
-├── report-template.md      # the parity-gap report format (preserve bucket A–F structure)
+├── report-template.md      # the parity-gap report format (append-only bucket ledger)
 └── scripts/                # low-freedom, run-exactly, forward-slash paths
     ├── fetch-upstream.sh
     ├── drift-gate.sh       # §3.1 + §3.2 merge-base authorship gate
@@ -218,11 +230,11 @@ Project skill, committed to the fork so it is versioned next to the code it guar
 ---
 name: merging-upstream
 description: >-
-  Fetches upstream, computes the additive-only drift gate against src/standalone,
-  regenerates the parity-gap report, and performs a guarded merge of upstream/main.
-  Use when syncing the fork with upstream, checking parity gaps, merging upstream/main,
-  or regenerating STANDALONE-PARITY-GAPS. Triggers: "sync upstream", "parity gaps",
-  "merge upstream/main", "check what features the fork is missing".
+  Use when syncing this fork with upstream, merging upstream/main, checking
+  standalone parity gaps, regenerating STANDALONE-PARITY-GAPS, or auditing whether
+  fork-authored edits have leaked outside src/standalone/. Triggers: "sync upstream",
+  "merge upstream/main", "parity gaps", "what features is the fork missing",
+  "check the additive-only invariant", "drift gate".
 ---
 ```
 
@@ -231,22 +243,27 @@ description: >-
 ### 5.2 SKILL.md body — ordered checklist (plan-validate-execute)
 
 ```
-1. PRECONDITION   Run scripts/fetch-upstream.sh. Assert upstream/main resolves; record base + head.
-2. DRIFT GATE     Run scripts/drift-gate.sh. If non-empty, classify each path:
-                  - named in `git log base..HEAD -- <path>` → deliberate edit → propose "upstream it"
-                  - empty log → merge-resolution drift → propose "re-merge"
-                  NEVER auto-revert (the fork carries the 44e9532 core edits — upstream-it).
+1. PRECONDITION   Run scripts/fetch-upstream.sh. Assert upstream/main resolves; record base + head + behind.
+2. DRIFT GATE     Run scripts/drift-gate.sh. Must be clean (exit 0). If it flags a path:
+                  - named in `git log base..HEAD -- <path>` → deliberate edit → VIOLATES the
+                    invariant; remediate (build seam / upstream-it / revert), never carry it.
+                  - empty log → merge-resolution drift → re-merge / checkout upstream.
+                  Surface the choice; NEVER silently auto-revert a real fix.
 3. PARITY GAP     Run scripts/parity-gap.mjs. Read its output (gap list + auto-tags + degradations).
 4. DRAFT REPORT   Regenerate docs-fork/STANDALONE-PARITY-GAPS.md from report-template.md.
-                  Preserve existing bucket A–F structure; leave bucket/difficulty/Effect as TODO.
-                  Newly-appeared upstream methods (diff vs previous run) get an explicit
-                  "allowlist decision needed" flag.
+                  Bucket ledger is append-only (A–E today; one new lettered bucket per surfaced
+                  feature; NO merge-debt bucket); leave bucket/difficulty/Effect as TODO.
+                  Newly-appeared upstream methods get an explicit "allowlist decision needed" flag.
 5. ASK            Present the drift classification + gap delta. STOP and ask before merging.
-6. GUARDED MERGE  On approval, run scripts/guarded-merge.sh on a NEW branch sync/upstream-<date>.
-                  It validates the plan (no non-standalone changes introduced by the merge that
-                  weren't already upstream) BEFORE committing, runs `npm run build:standalone`
-                  (the FF-redirect self-guard), and ABORTs loud on conflict or gate failure.
-7. VERIFY         Re-run scripts/drift-gate.sh; confirm empty. Report branch name. DO NOT push.
+6. GUARDED MERGE  On approval, run scripts/guarded-merge.sh execute. It creates sync/upstream-<date>,
+                  merges --no-commit, keeps the fork's README (KEEP_FROM_FORK), runs
+                  `npm run build:standalone` (the FF-redirect self-guard), ABORTs loud on conflict
+                  or gate failure, and commits only if the gate passes.
+7. VERIFY         Re-run scripts/drift-gate.sh; confirm exit 0. Report the branch; ask the human to
+                  review it (git log/diff main..<branch>). DO NOT push. Offer the land follow-up.
+8. LAND           On explicit approval, run scripts/guarded-merge.sh land <branch>. It re-checks the
+                  drift gate (blocks on exit 1 AND exit 2) and FAST-FORWARDS LOCAL main (--ff-only).
+                  Never pushes; never opens a PR. The sync branch is kept as an audit trail.
 ```
 
 Each script is marked **"Run this"** (execute, not read). `guarded-merge.sh` must **solve, don't punt**: explicit verbose failures (`ABORT: merge would modify non-standalone path(s): <list>`), commented constants (no voodoo values), forward-slash paths even though the repo is on Windows/PowerShell.
@@ -258,10 +275,11 @@ Each script is marked **"Run this"** (execute, not read). `guarded-merge.sh` mus
 
 ### 5.4 Safety properties
 
-- **Never auto-pushes** (step 7 stops at a local branch; the human runs `git push -u origin sync/...` + opens the PR).
-- **Never merges onto `main`** directly — always a `sync/upstream-<date>` branch.
-- **Never auto-reverts** the fork's deliberate edits (`44e9532`); it proposes upstreaming them.
-- **Surfaces conflicts** rather than auto-favoring a side (except a generated/lock file inside `src/standalone/`).
+- **Never pushes** — every step stays local; nothing is published to a remote.
+- **Never *auto*-merges onto `main`** — `execute` only ever lands on a `sync/upstream-<date>` branch; `main` advances solely through the explicit, separately-approved `land` step, and only by fast-forward (`--ff-only`). No push, no PR.
+- **Never *silently* reverts** a fork edit — it surfaces drift outside `src/standalone/` and the remediation choice (build seam / upstream-it / revert) for the human. The fork currently carries zero drift; `land` refuses to advance `main` while any remains (drift-gate exit 1 *or* 2).
+- **Never syncs `README.md`** — the fork's README is always kept and upstream's discarded (the `KEEP_FROM_FORK` pin); README is outside the `src/` gate, so this never affects the invariant.
+- **Surfaces conflicts** rather than auto-favoring a side (except a generated/lock file).
 - **Build-as-gate:** runs `npm run build:standalone` so a constants rename that slips past pure git-diff is caught by the `onEnd` 0-redirect throw (`esbuild.mjs:38-45`).
 - **Tooling caveat for the script author:** build automation on `git show <ref>:path` and `git diff` plumbing, not on reading the working tree.
 
@@ -289,17 +307,19 @@ git log HEAD..upstream/main --oneline -- src/ ':(exclude)src/standalone/'   # to
 # 4. on a sync branch (the skill made it): resolve conflicts, leaning on rerere
 git diff --check && git merge --continue
 
-# 5. invariant must hold
+# 5. invariant must hold (exit 0)
 base=$(git merge-base HEAD upstream/main)
 git diff --quiet "$base" HEAD -- src/ ':(exclude)src/standalone/' && echo "INVARIANT OK"
 npm run build:standalone                                     # FF-redirect self-guard must pass
 
-# 6. publish (human does this — skill never pushes)
-git push -u origin sync/upstream-$(date +%Y%m%d)
-gh pr create --base main --fill
+# 6. review the sync branch, then LAND on LOCAL main (skill never pushes, never opens a PR)
+git log main..sync/upstream-$(date +%Y%m%d) --oneline        # what would land
+bash .claude/skills/merging-upstream/scripts/guarded-merge.sh land sync/upstream-$(date +%Y%m%d)
+#    -> re-gates (blocks on drift, exit 1 or 2), fast-forwards LOCAL main (--ff-only),
+#       keeps the sync branch as an audit trail. Nothing is pushed.
 
-# 7. if a fork edit outside src/standalone is generically useful (e.g. the locale pin):
-#    open a PR to microsoft/AI-Engineering-Coach to retire the drift permanently.
+# 7. if drift outside src/standalone is ever needed as a behavior change, it goes behind the
+#    build seam (§3.3) — never a shared-core edit. A portable bug fix is PR'd to upstream.
 ```
 
 ---
