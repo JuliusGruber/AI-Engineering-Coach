@@ -89,3 +89,36 @@ describe('bucket-E SDLC bridge — populated (resolvable, Codex-shaped root)', (
     ]);
   });
 });
+
+describe('bucket-E SDLC bridge — unresolved root (log-dir-shaped, Claude/OpenCode)', () => {
+  it('getSdlcRepoScan returns no repos when the root resolves to null', async () => {
+    const logDir = tmpDir(); // no package.json / workspace.json / workspace.yaml
+    const parseResult = makeParseResult({ workspaces: [{ id: 'ws1', name: 'claude-proj', path: logDir }] });
+    const res = await dispatchServiceMethod('getSdlcRepoScan', {}, ctx(parseResult));
+    expect(res).toEqual({ ok: true, data: { repos: [] } });
+  });
+
+  it('getWorkspaceDeps returns no deps when the root resolves to null', async () => {
+    const logDir = tmpDir();
+    const parseResult = makeParseResult({ workspaces: [{ id: 'ws1', name: 'claude-proj', path: logDir }] });
+    const res = await dispatchServiceMethod('getWorkspaceDeps', {}, ctx(parseResult));
+    expect(res).toEqual({ ok: true, data: { deps: [] } });
+  });
+});
+
+describe('bucket-E SDLC bridge — serve-then-parse (parseResult undefined → empty, never ok:false)', () => {
+  it('getSdlcToolAnalysis self-guards to empty', async () => {
+    const res = await dispatchServiceMethod('getSdlcToolAnalysis', {}, ctx(undefined));
+    expect(res).toEqual({ ok: true, data: { mcpServers: [], toolCounts: {} } });
+  });
+
+  it('getWorkspaceDeps self-guards to empty', async () => {
+    const res = await dispatchServiceMethod('getWorkspaceDeps', {}, ctx(undefined));
+    expect(res).toEqual({ ok: true, data: { deps: [] } });
+  });
+
+  it('getSdlcRepoScan self-guards to empty', async () => {
+    const res = await dispatchServiceMethod('getSdlcRepoScan', {}, ctx(undefined));
+    expect(res).toEqual({ ok: true, data: { repos: [] } });
+  });
+});
