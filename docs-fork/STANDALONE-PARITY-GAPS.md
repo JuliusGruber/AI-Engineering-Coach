@@ -9,7 +9,8 @@ security CSP/XSS branches) are excluded.
 **Derived:** 2026-05-27, against upstream HEAD `abc0a6c`. The fork is
 additive-only — it ships all upstream source untouched (verified: `git diff
 upstream/main` is empty across `src/` outside `src/standalone/`), then exposes
-it through a frozen 40-method allowlist (`src/standalone/v1-allowed.ts`). It
+it through a frozen allowlist (`src/standalone/v1-allowed.ts`) — 40 read-only
+methods at derivation, now 52 after buckets A, B, and D shipped. It
 reuses upstream's nav verbatim — `standalone-html.ts` only swaps the CSP,
 token, and script tags. What looks "trimmed" is upstream's own doing: the
 burndown link is gated by `FF_TOKEN_REPORTING_ENABLED`, and several routes
@@ -19,7 +20,9 @@ nav link upstream. Everything below is in upstream's `RpcMethodMap` /
 flag-gated, or deep-link-only. Difficulty tags are estimates; each item names
 the blocker.
 
-~18 gaps across 5 buckets.
+~18 gaps across 5 buckets at derivation. **Status (2026-05-30):** buckets A,
+B, and D are SHIPPED; ~4 gaps remain across buckets C (project-scoped analysis)
+and E (agentic SDLC).
 
 ## A. Quick wins — SHIPPED (2026-05-27)
 
