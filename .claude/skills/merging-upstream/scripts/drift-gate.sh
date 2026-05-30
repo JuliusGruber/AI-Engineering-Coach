@@ -39,7 +39,7 @@ else
       echo "               introduced by: $(echo "$log" | tail -1)"
       echo "               -> propose: UPSTREAM IT (PR to microsoft/AI-Engineering-Coach), or move"
       echo "                  the behaviour behind a src/standalone/ build seam. NEVER auto-revert"
-      echo "                  (panel-request-service.ts carries a correct Windows path.join fix)."
+      echo "                  (e.g. metric-engine.ts locale pin / parser-codex.test.ts timeout, commit 44e9532)."
     else
       echo "  MERGE-DRIFT  $f"
       echo "               (empty \$base..HEAD log — behind-upstream / merge-resolution noise)"

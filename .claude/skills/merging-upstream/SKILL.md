@@ -47,8 +47,8 @@ Run everything from the repo root.
    It classifies every path outside `src/standalone/`:
    - `DELIBERATE` (named in `git log base..HEAD`) → propose **upstream it** (PR to
      microsoft/AI-Engineering-Coach) or move the behavior behind a `src/standalone/`
-     build seam. **NEVER auto-revert** — `panel-request-service.ts` carries a correct
-     Windows `path.join` fix (commit `e3be742`) that reverting would re-break.
+     build seam. **NEVER auto-revert** — the fork carries 2 deliberate edits (commit `44e9532`):
+     the `metric-engine.ts` locale pin + `parser-codex.test.ts` timeout, kept to keep local tests green.
    - `MERGE-DRIFT` (empty `base..HEAD` log) → propose **re-merge** /
      `git checkout upstream/main -- <file>`.
    A `PRECONDITION BREACH` (exit 1) is hard — fix before merging.
@@ -92,7 +92,7 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 
 - **Never pushes** — the workflow stops at a local branch; a human publishes.
 - **Never merges onto `main`** — always a `sync/upstream-<date>` branch.
-- **Never auto-reverts** the `path.join` fix (`e3be742`) — it proposes upstreaming it.
+- **Never auto-reverts** the fork's deliberate edits (`44e9532`) — it proposes upstreaming them.
 - **Surfaces conflicts** rather than auto-favoring a side (except a generated/lock file).
 - **Build-as-gate** — `npm run build:standalone` catches a `constants.ts` rename that a
   pure git-diff would miss (esbuild throws `0 redirects` on `onEnd`).
@@ -117,8 +117,9 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 
 - **Gating on `upstream/main` instead of the merge-base** → ~16 false positives; the gate
   gets ignored. Always use `git merge-base HEAD upstream/main`.
-- **Reverting `panel-request-service.ts`** → re-introduces the mixed-separator bug that
-  broke `service-writes.test.ts` on Windows. Upstream it instead.
+- **Reverting the `44e9532` core edits** (`metric-engine.ts` locale pin, `parser-codex.test.ts`
+  timeout) → turns `metric-engine.test.ts` / the Codex large-file test red locally on non-en-US
+  or slow-disk machines. Upstream them instead.
 - **Editing a shared core file to change behavior** → breaks the invariant. Add a
   standalone-only re-export + an esbuild `onResolve` redirect (see `reference.md`).
 - **Trusting an allowlist header comment for counts** → count the Set *literally*;

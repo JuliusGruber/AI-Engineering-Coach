@@ -3,7 +3,7 @@
 > Derived 2026-05-30 against `upstream/main` = `3a41450`, merge-base `1fef41a`
 > (HEAD 67 commits behind). Produced by a codebase-grounded + web-researched,
 > adversarially-verified workflow. Load-bearing claims (merge-base authorship
-> diff, commit `e3be742`, the esbuild redirect plugin) re-verified by hand
+> diff, commit `44e9532`, the esbuild redirect plugin) re-verified by hand
 > against the live repo.
 
 ## 1. TL;DR
@@ -12,7 +12,7 @@
 - **Enforce the invariant against the merge-base, not `upstream/main`.** The reliable authorship gate is `git diff --name-only $(git merge-base HEAD upstream/main) HEAD -- src/ ':(exclude)src/standalone/'` — it must be empty. Gating on `upstream/main` directly reports ~16 false positives (behind-upstream noise).
 - **Behavior overrides live in the build, not in core.** `esbuild.mjs:19-49` redirects `core/constants` → `src/standalone/standalone-constants.ts` to flip `FF_TOKEN_REPORTING_ENABLED` for standalone bundles only, so `src/core/constants.ts:127` stays byte-identical to upstream. Any future override follows this pattern — never edit core.
 - **Parity gaps are a set-difference + four secondary signals.** `unexposed = keyof ExtensionMethodMap \ (V1_ALLOWED ∪ V1_SERVICE_ALLOWED ∪ keys(STANDALONE_NATIVE))`, then layer FF-gate / call-site / deep-link / write-path tags. The mechanical diff regenerates the bulk of `docs-fork/STANDALONE-PARITY-GAPS.md`; bucketing/difficulty stay human.
-- **Ship one project skill `merging-upstream`** with low-freedom helper scripts for the dangerous git plumbing and high-freedom prose for triage. It never auto-pushes, never auto-reverts the legit Windows `path.join` fix, and surfaces conflicts for a human.
+- **Ship one project skill `merging-upstream`** with low-freedom helper scripts for the dangerous git plumbing and high-freedom prose for triage. It never auto-pushes, never auto-reverts the fork's deliberate edits (the `44e9532` core edits), and surfaces conflicts for a human.
 
 ---
 
@@ -59,26 +59,24 @@ git merge --continue
 
 ### 2.4 Remediating the already-drifted files
 
-The naive command (`git diff upstream/main -- src/`) lists files, but the **merge-base** diff shows only **3 fork-authored/merge-resolved** files, and only **one** is a deliberate edit:
+The naive command (`git diff upstream/main -- src/`) lists files, but the **merge-base** diff shows only the fork's **2 deliberate edits** (both commit `44e9532`):
 
 ```bash
 base=$(git merge-base HEAD upstream/main)
 git diff --name-only "$base" HEAD -- src/ ':(exclude)src/standalone/'
 # -> src/core/metric-engine.ts
 #    src/core/parser-codex.test.ts
-#    src/webview/panel-request-service.ts
-for f in src/core/metric-engine.ts src/core/parser-codex.test.ts src/webview/panel-request-service.ts; do
+for f in src/core/metric-engine.ts src/core/parser-codex.test.ts; do
   echo "== $f =="; git log --oneline "$base"..HEAD -- "$f"
 done
 ```
 
 | File | Attribution | Remediation |
 |---|---|---|
-| `src/webview/panel-request-service.ts` | **Deliberate fork edit**, commit `e3be742` "fix(standalone): build install paths with path.join for Windows separator parity" (1 file, +2/-2). Correct, generically-useful Windows fix. | **Upstream it** (open a PR to microsoft/AI-Engineering-Coach). Do **not** revert — reverting reintroduces the mixed-separator bug that broke `service-writes.test.ts` on this Windows repo. |
-| `src/core/metric-engine.ts` | Merge-resolution drift (`git log $base..HEAD` is **empty**) — behind upstream, not intentional. | **Re-merge** current upstream (or `git checkout upstream/main -- <file>`). |
-| `src/core/parser-codex.test.ts` | Same — merge-resolution drift. | Same — re-merge. |
+| `src/core/metric-engine.ts` | **Deliberate fork edit**, commit `44e9532` — pins `toLocaleString('en-US')` so `serializeCalibration` is locale-stable; without it `metric-engine.test.ts` goes red on non-en-US locales (this machine's Node default formats `1234` as `1 234`, not `1,234`). | **Upstream it** (PR to microsoft/AI-Engineering-Coach). Do **not** revert — it turns that test red locally. |
+| `src/core/parser-codex.test.ts` | **Deliberate fork edit**, commit `44e9532` — 120s timeout on the >`MAX_FILE_SIZE` Codex test; the global `testTimeout` is 15s but the test needs ~60s on Windows/slow disks. | **Upstream it** or keep. Do **not** revert — it times the test out locally. |
 
-The webview files named only in the literal `upstream/main` diff (`panel.ts`, `page-burndown.ts`, `panel-sidebar.ts`) have an **empty** `$base..HEAD` log — they are behind/merge-resolved noise, **not** fork authorship. Do not touch them as "invariant breaches." After upstreaming the path.join fix and re-merging, the merge-base diff returns empty and the invariant holds. **There is no fork code sitting in the wrong directory** — the standalone strategy is structurally clean; the drift is incidental.
+The webview files named only in the literal `upstream/main` diff (`panel.ts`, `page-burndown.ts`, `panel-sidebar.ts`) have an **empty** `$base..HEAD` log — they are behind/merge-resolved noise, **not** fork authorship. Do not touch them as "invariant breaches." After upstreaming the `44e9532` edits and re-merging, the merge-base diff returns empty and the invariant holds. **There is no fork code sitting in the wrong directory** — the standalone strategy is structurally clean; the drift is incidental.
 
 ---
 
@@ -237,7 +235,7 @@ description: >-
 2. DRIFT GATE     Run scripts/drift-gate.sh. If non-empty, classify each path:
                   - named in `git log base..HEAD -- <path>` → deliberate edit → propose "upstream it"
                   - empty log → merge-resolution drift → propose "re-merge"
-                  NEVER auto-revert (panel-request-service.ts carries a correct Windows fix).
+                  NEVER auto-revert (the fork carries the 44e9532 core edits — upstream-it).
 3. PARITY GAP     Run scripts/parity-gap.mjs. Read its output (gap list + auto-tags + degradations).
 4. DRAFT REPORT   Regenerate docs-fork/STANDALONE-PARITY-GAPS.md from report-template.md.
                   Preserve existing bucket A–F structure; leave bucket/difficulty/Effect as TODO.
@@ -262,7 +260,7 @@ Each script is marked **"Run this"** (execute, not read). `guarded-merge.sh` mus
 
 - **Never auto-pushes** (step 7 stops at a local branch; the human runs `git push -u origin sync/...` + opens the PR).
 - **Never merges onto `main`** directly — always a `sync/upstream-<date>` branch.
-- **Never auto-reverts** the legit `path.join` fix (`e3be742`); it proposes upstreaming it.
+- **Never auto-reverts** the fork's deliberate edits (`44e9532`); it proposes upstreaming them.
 - **Surfaces conflicts** rather than auto-favoring a side (except a generated/lock file inside `src/standalone/`).
 - **Build-as-gate:** runs `npm run build:standalone` so a constants rename that slips past pure git-diff is caught by the `onEnd` 0-redirect throw (`esbuild.mjs:38-45`).
 - **Tooling caveat for the script author:** build automation on `git show <ref>:path` and `git diff` plumbing, not on reading the working tree.
@@ -300,7 +298,7 @@ npm run build:standalone                                     # FF-redirect self-
 git push -u origin sync/upstream-$(date +%Y%m%d)
 gh pr create --base main --fill
 
-# 7. if a fork edit outside src/standalone is generically useful (e.g. the path.join fix):
+# 7. if a fork edit outside src/standalone is generically useful (e.g. the locale pin):
 #    open a PR to microsoft/AI-Engineering-Coach to retire the drift permanently.
 ```
 

@@ -5,7 +5,7 @@
 #   - NEVER pushes (the human runs `git push -u origin sync/...` + opens the PR).
 #   - NEVER merges onto main directly — always a fresh sync/upstream-<date> branch.
 #   - NEVER auto-resolves conflicts — surfaces them for a human (lean on rerere).
-#   - NEVER auto-reverts the legit path.join fix — it is a deliberate edit to upstream.
+#   - NEVER auto-reverts the fork's deliberate edits (44e9532) — they are upstream-it candidates.
 #   - Build-as-gate: runs `npm run build:standalone` so the esbuild onEnd 0-redirect
 #     throw catches a constants rename that a pure git-diff would miss.
 # Run this (do not read it) — only its stdout matters.
@@ -71,7 +71,7 @@ if ! git merge --no-ff --no-commit upstream/main; then
 fi
 
 # VALIDATE before committing: staged tree outside src/standalone/ should match upstream/main.
-# A non-empty list is EXPECTED only for deliberate carried edits (e.g. the path.join fix) —
+# A non-empty list is EXPECTED only for deliberate carried edits (e.g. the 44e9532 core edits) —
 # surface it, do not silently proceed, do not auto-revert.
 offenders=$(git diff --name-only --cached upstream/main -- src/ "$EXCLUDE")
 if [ -n "$offenders" ]; then

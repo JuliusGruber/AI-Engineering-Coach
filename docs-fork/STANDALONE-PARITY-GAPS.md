@@ -188,28 +188,31 @@ features the fork never merged, and the fastest fix for the first two is a plain
   and have no standalone equivalent. Not a standalone-UI gap.
 
 > **Merge-cleanliness caveat:** the fork's `src/standalone/` work is orthogonal to this
-> delta. Expected conflicts are confined to two fork-authored files (see *Fork-authored
-> drift* below): `parser-codex.test.ts` (upstream +86 lines, #67) and
-> `panel-request-service.ts` (upstream 1 line) — resolve both toward keeping the fork's
-> fix *and* upstream's additions. `metric-engine.ts` will NOT conflict (upstream never
+> delta. Expected conflicts are confined to one fork-authored file (see *Fork-authored
+> drift* below): `parser-codex.test.ts` (upstream +86 lines, #67) — resolve toward keeping
+> the fork's timeout *and* upstream's new tests. `metric-engine.ts` will NOT conflict (upstream never
 > touched it since the merge-base). After merging, verify the standalone constants
 > `onResolve` override and the `standalone-html.ts` nav-boundary assertions still hold.
 
 ### Fork-authored drift outside `src/standalone/` (upstream-it candidates — fork is *ahead*)
 
-Three deliberate edits live in shared `src/` (drift gate, 2026-05-30). **None are merge
-debt** — each is a portable correctness fix the fork should PR to
-`microsoft/AI-Engineering-Coach` rather than carry indefinitely. The drift gate classifies
-all three as `DELIBERATE` and proposes upstream-it; **never auto-revert** them.
+Two deliberate edits live in shared `src/` (drift gate, 2026-05-30). **Neither is merge
+debt** — both are portable fixes the fork should PR to `microsoft/AI-Engineering-Coach`
+rather than carry indefinitely. The drift gate classifies both as `DELIBERATE` and proposes
+upstream-it; **never auto-revert** them — each keeps an upstream test green locally.
 
 - `src/core/metric-engine.ts` — `toLocaleString('en-US')` locale pin (commit `44e9532`).
-  No upstream overlap → merges clean.
-- `src/core/parser-codex.test.ts` — 120s timeout on the `>MAX_FILE_SIZE` Codex test (slow
-  on Windows), commit `44e9532`. **Conflict risk:** upstream added +86 lines to this same
-  test file (#67) — keep the fork's timeout *and* upstream's new tests.
-- `src/webview/panel-request-service.ts` — Windows `path.join` separator fix (commit
-  `e3be742`). **Conflict risk:** upstream changed 1 line here — resolve toward keeping the
-  `path.join` fix; reverting it re-breaks `service-writes.test.ts` on Windows.
+  Without it `metric-engine.test.ts:435` goes red on non-en-US locales (this machine's Node
+  default formats `1234` as `1 234`, not `1,234`). No upstream overlap → merges clean.
+- `src/core/parser-codex.test.ts` — 120s timeout on the `>MAX_FILE_SIZE` Codex test (commit
+  `44e9532`); the global `testTimeout` is 15s but the test needs ~60s on Windows/slow disks.
+  **Conflict risk:** upstream added +86 lines to this same test file (#67) — keep the fork's
+  timeout *and* upstream's new tests.
+
+> **Reverted 2026-05-30:** `src/webview/panel-request-service.ts`'s Windows `path.join`
+> separator fix (commit `e3be742`) was reverted to match upstream byte-for-byte.
+> `vscode.Uri.file` normalizes separators, so no test depended on it — the fork no longer
+> carries it, and this file is back inside the additive-only invariant.
 
 ## Per-method degradations (within otherwise-shipped pages)
 

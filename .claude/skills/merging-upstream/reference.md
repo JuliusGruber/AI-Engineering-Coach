@@ -80,8 +80,8 @@ for VS Code APIs, so the stub never leaks into the published extension.
 ## 4. Remediating already-drifted files
 
 The naive `git diff upstream/main -- src/` over-reports. The **merge-base** diff is the
-truth. As of the last analysis the only **deliberate** fork edit outside `src/standalone/`
-is `src/webview/panel-request-service.ts` (commit `e3be742`, the Windows `path.join` fix) —
+truth. As of the last analysis the **deliberate** fork edits outside `src/standalone/`
+are `src/core/metric-engine.ts` (locale pin) + `src/core/parser-codex.test.ts` (test timeout), both commit `44e9532` —
 **upstream it, do not revert.** Other listed core files may be merge-resolution drift
 (re-merge) or, if they carry a real fork commit, deliberate edits to reconcile. `drift-gate.sh`
 classifies each live — trust its output over any snapshot in prose (the live state moves).
