@@ -28,7 +28,7 @@ export class DashboardSidebarProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.renderHtml(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((msg: { command: string }) => {
-      vscode.commands.executeCommand(msg.command);
+      void vscode.commands.executeCommand(msg.command);
     });
   }
 

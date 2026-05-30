@@ -292,7 +292,7 @@ Generate 3 ${context.difficulty} interview-style questions tailored to this deve
     const prompt = isString(params.prompt) ? params.prompt : '';
     if (!prompt) return;
 
-    vscode.commands.executeCommand('workbench.action.chat.open', {
+    void vscode.commands.executeCommand('workbench.action.chat.open', {
       query: prompt,
     }).then(
       () => postResponse(this.webview, msg.id, { ok: true }),
