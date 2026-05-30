@@ -131,9 +131,9 @@ data-ready-guard), so render won't even begin until data exists.
 
 Mirrors the bucket B/D contract-test pattern. Four layers:
 
-1. **Frozen-set membership** (`__tests__/v1-service-allowed.test.ts`, edit
-   existing): change `toBe(12)` → `15` (count test + frozen-mutation test). Flip
-   the `excludes … bucket-E service methods` test: replace the
+1. **Frozen-set membership** (`src/standalone/__tests__/v1-service-allowed.test.ts`,
+   edit existing): change `toBe(12)` → `15` (count test + frozen-mutation test).
+   Flip the `excludes … bucket-E service methods` test: replace the
    `getWorkspaceDeps`/`getSdlcRepoScan` = `false` assertions with a positive test
    asserting all three new methods are `true`; keep `getSdlcGitHubData` and
    `createSkill` asserted `false` (the remaining genuine exclusions).
