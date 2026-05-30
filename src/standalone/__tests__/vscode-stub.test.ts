@@ -96,10 +96,20 @@ describe('callLlmJson OpenAI strict-mode self-heal through the stub lm (grilling
 });
 
 describe('write seam — Uri', () => {
-  it('Uri.file returns { fsPath, path } mirroring the input path', () => {
-    expect(vscode.Uri.file('/home/u/.agents/skills/x.md')).toEqual({
-      fsPath: '/home/u/.agents/skills/x.md',
-      path: '/home/u/.agents/skills/x.md',
+  it('Uri.file normalizes fsPath to native separators and keeps path forward-slash (real VS Code parity)', () => {
+    const input = '/home/u/.agents/skills/x.md';
+    expect(vscode.Uri.file(input)).toEqual({
+      fsPath: path.normalize(input), // native: backslashes on Windows, unchanged on POSIX
+      path: input, // forward-slash form (input has no backslashes → unchanged)
+    });
+  });
+
+  it('Uri.file converts a mixed-separator input (Windows HOME + forward-slash tail) to a native fsPath', () => {
+    // installSkill builds `${homeDir}/.agents/skills/x.md`; on Windows homeDir carries backslashes.
+    const mixed = 'C:\\Users\\u/.agents/skills/x.md';
+    expect(vscode.Uri.file(mixed)).toEqual({
+      fsPath: path.normalize(mixed),
+      path: 'C:/Users/u/.agents/skills/x.md',
     });
   });
 

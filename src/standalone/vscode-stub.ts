@@ -9,8 +9,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 export const Uri = {
-  // installSkill:615 / installCatalogItem:651 build absolute targets via Uri.file(`${HOME}/...`).
-  file: (p: string) => ({ fsPath: p, path: p }),
+  // installSkill:615 / installCatalogItem:651 build absolute targets via Uri.file(`${HOME}/...`),
+  // where HOME on Windows carries backslashes → a mixed-separator input. Mirror real VS Code:
+  // fsPath is platform-native (path.normalize → backslashes on Windows) and path stays
+  // forward-slash. The old pure pass-through leaked the forward slashes into fsPath, so the
+  // installSkill response reported `C:\...coach-sw/.agents/...` and service-writes.test.ts
+  // (which expects path.join's native separators) failed on Windows only.
+  file: (p: string) => ({ fsPath: path.normalize(p), path: p.replace(/\\/g, '/') }),
   // Honor the base ONLY when present. getDashboardHtml (panel-html.ts:11) passes an empty {}
   // extensionUri → b === '' → filter(Boolean) drops it → identical to the old impl (snapshot
   // stays byte-identical). exportSummaryFiles:47 passes a real folder → must NOT be dropped.
