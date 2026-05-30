@@ -91,4 +91,29 @@ describe('parseOpenCodeSessions', () => {
       },
     );
   });
+
+  it('stores the OpenCode session directory as workspaceRootPath', () => {
+    // rawSession.directory is the project root. Surfacing it as
+    // workspaceRootPath lets config-health / SDLC workspace scans resolve the
+    // repo for OpenCode sessions, the same way the Codex parser already does.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-dir-test-'));
+    withStorage(
+      { id: 'sess-dir', directory: dir, time: { created: 1700000000000 } },
+      [
+        { id: 'u1', sessionID: 'sess-dir', role: 'user', time: { created: 1700000000000 }, summary: { title: 'hi' } },
+        {
+          id: 'a1', sessionID: 'sess-dir', role: 'assistant', parentID: 'u1',
+          time: { created: 1700000001000, completed: 1700000002000 },
+          modelID: 'claude-sonnet-4',
+          tokens: { input: 100, output: 20 },
+        },
+      ],
+      (storageDir) => {
+        const sessions = parseOpenCodeSessions(storageDir);
+        expect(sessions).toHaveLength(1);
+        expect(sessions[0].workspaceRootPath).toBe(dir);
+      },
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
