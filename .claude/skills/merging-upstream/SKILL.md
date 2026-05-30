@@ -33,9 +33,10 @@ must be empty. Gate against the **merge-base**, not `upstream/main` (the latter 
 - Auditing the invariant: "did anything leak outside src/standalone", "drift gate".
 
 Not for: ordinary feature work inside `src/standalone/` (that's just normal development),
-or pushing/opening PRs (this skill stops at a local branch — a human publishes).
+or pushing/opening PRs — this skill never touches a remote. It ends at a reviewed local
+`sync/upstream-<date>` branch and, on your explicit approval, fast-forwards your *local* `main`.
 
-## Workflow (plan → validate → execute)
+## Workflow (plan → validate → execute → review → land)
 
 Run the scripts — **execute them, do not read them**; only their stdout enters context.
 Run everything from the repo root.
@@ -85,8 +86,18 @@ Run everything from the repo root.
    is always discarded, never synced (the `KEEP_FROM_FORK` pin in `guarded-merge.sh`). It
    **ABORTs loud** on any failure and **never pushes**.
 
-7. **VERIFY** — Re-run `drift-gate.sh`; confirm `VERDICT: INVARIANT OK`. Report the branch
-   name. **Do not push** — a human runs `git push -u origin sync/...` and opens the PR.
+7. **VERIFY & HAND BACK FOR REVIEW** — Re-run `drift-gate.sh`. Report the
+   `sync/upstream-<date>` branch name and **ask the human to review it** before anything lands —
+   point them at `git log main..<branch>` and `git diff main..<branch>`. **Never push.** Then
+   **offer the follow-up explicitly**: *"Want me to merge this onto your local `main`?"*
+
+8. **LAND (only on explicit approval)** — When the human approves, run
+   `bash .claude/skills/merging-upstream/scripts/guarded-merge.sh land <branch>`. It requires a
+   clean tree, re-checks the drift gate (blocking only on a **HARD precondition breach** — the
+   fork's normal authorship drift from `44e9532` is surfaced, not blocked), and **fast-forwards
+   LOCAL `main`** onto the reviewed branch (`--ff-only`: it refuses, never force-merges, if
+   `main` has moved). It **never pushes**. The sync branch is kept as an audit trail until the
+   human deletes it (`git branch -d <branch>`).
 
 ## Conflict policy (do not auto-favor a side)
 
@@ -104,8 +115,10 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 
 ## Safety properties (the scripts enforce these — keep them)
 
-- **Never pushes** — the workflow stops at a local branch; a human publishes.
-- **Never merges onto `main`** — always a `sync/upstream-<date>` branch.
+- **Never pushes** — every step stays local; nothing is published to a remote.
+- **Never *auto*-merges onto `main`** — `execute` only ever lands on a `sync/upstream-<date>`
+  branch. `main` advances solely through the explicit, separately-approved `land` step, and
+  only by **fast-forward** (`--ff-only`) — never a force, never an auto-merge.
 - **Never auto-reverts** the fork's deliberate edits (`44e9532`) — it proposes upstreaming them.
 - **Never syncs `README.md`** — the fork's README is always kept and upstream's discarded (the
   `KEEP_FROM_FORK` pin). README is outside the `src/` drift gate, so this never affects the invariant.
@@ -129,7 +142,7 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 | `scripts/fetch-upstream.sh` | add remote + rerere (idempotent), fetch, print refs | remote/global config only |
 | `scripts/drift-gate.sh` | merge-base authorship gate + override preconditions; classifies drift | no |
 | `scripts/parity-gap.mjs` | `universe \ exposed` gap, counts, degradations, new-method delta | no |
-| `scripts/guarded-merge.sh` | `plan` (read-only) / `execute` (branch + guarded merge + build gate) | only on `execute` |
+| `scripts/guarded-merge.sh` | `plan` (read-only) / `execute` (branch + guarded merge + build gate) / `land` (ff-only sync→local main, re-gates) | `execute`, `land` |
 
 ## Common mistakes
 
@@ -150,7 +163,12 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 - **Renumbering, merging, or deleting buckets** → the bucket list is an **append-only ledger**.
   Each new feature gets the next free letter (one bucket per feature); an implemented one is
   marked `SHIPPED (<date>)` **in place** by the implementing agent. Never reorganize the ledger.
-- **Pushing or merging onto `main` from the skill** → never. Stop at the local branch.
+- **Pushing, or *auto*-merging onto `main`** → never. The skill stops at a reviewed
+  `sync/upstream-<date>` branch; `main` only moves via the explicit `land` follow-up
+  (fast-forward, local-only) after the human approves. Never push.
+- **Making `land` block on the fork's normal authorship drift** → `drift-gate.sh` exits `2`
+  whenever fork edits live outside `src/standalone/`, which is *always* true here (the `44e9532`
+  edits). `land` must block only on exit `1` (HARD precondition breach), never on exit `2`.
 
 For the invariant, the override seam, and the parity algorithm in full, read `reference.md`.
 For the report format, use `report-template.md`.

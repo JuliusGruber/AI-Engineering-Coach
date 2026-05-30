@@ -2,8 +2,10 @@
 # scripts/guarded-merge.sh — plan-validate-execute guarded merge of upstream/main.
 #
 # Safety properties (do not weaken):
-#   - NEVER pushes (the human runs `git push -u origin sync/...` + opens the PR).
-#   - NEVER merges onto main directly — always a fresh sync/upstream-<date> branch.
+#   - NEVER pushes — every step stays local; nothing is published to a remote.
+#   - NEVER auto-merges onto main — `execute` always lands on a fresh sync/upstream-<date>
+#     branch. main advances ONLY via the explicit, separately-approved `land` step, and only
+#     by fast-forward (--ff-only) — never a force, never an auto-merge.
 #   - NEVER auto-resolves conflicts — surfaces them for a human (lean on rerere).
 #   - NEVER auto-reverts the fork's deliberate edits (44e9532) — they are upstream-it candidates.
 #   - NEVER syncs README.md from upstream — always keeps the fork's committed README (KEEP_FROM_FORK).
@@ -14,8 +16,9 @@
 # Run from the repo root.
 #
 # Usage:
-#   guarded-merge.sh plan      # safe: shows incoming commits + the core files upstream touches; mutates nothing
-#   guarded-merge.sh execute   # creates sync/upstream-<date>, merges --no-commit, runs the build gate, commits
+#   guarded-merge.sh plan                          # safe: shows incoming commits + the core files upstream touches; mutates nothing
+#   guarded-merge.sh execute                       # creates sync/upstream-<date>, merges --no-commit, runs the build gate, commits
+#   guarded-merge.sh land [sync/upstream-<date>]   # fast-forward LOCAL main onto the reviewed sync branch (ff-only); never pushes
 set -uo pipefail
 
 MODE="${1:-plan}"
@@ -60,7 +63,45 @@ if [ "$MODE" = "plan" ]; then
   exit 0
 fi
 
-[ "$MODE" = "execute" ] || abort "unknown mode '$MODE' (use: plan | execute)"
+# ---- LAND (fast-forward LOCAL main onto the reviewed sync branch) -------------
+# Separate, explicitly-approved follow-up: the human reviewed the sync branch and chose to land it.
+# Fast-forward ONLY and LOCAL ONLY — never a force-merge, never a push.
+if [ "$MODE" = "land" ]; then
+  sync_branch="${2:-$(git branch --show-current)}"
+  case "$sync_branch" in
+    sync/upstream-*) : ;;
+    *) abort "refusing to land '$sync_branch' — expected a sync/upstream-<date> branch (pass it: guarded-merge.sh land sync/upstream-YYYYMMDD)" ;;
+  esac
+  git rev-parse --verify "$sync_branch" >/dev/null 2>&1 || abort "no such branch: $sync_branch"
+  git diff --quiet && git diff --cached --quiet || abort "working tree not clean — commit or stash first"
+
+  # Re-check the additive-only gate on the branch we're about to land. Block ONLY on a HARD
+  # precondition breach (drift-gate exit 1: constants drift / redirect unwired / shadow leak).
+  # Authorship drift (exit 2 — e.g. the carried 44e9532 edits) is the fork's NORMAL state:
+  # surfaced for awareness, never a blocker. The human already reviewed the branch.
+  git switch "$sync_branch" || abort "could not switch to $sync_branch"
+  echo "== drift-gate on $sync_branch (precondition re-check before landing) =="
+  bash "$(dirname "$0")/drift-gate.sh"; gate_rc=$?
+  if [ "$gate_rc" -eq 1 ]; then
+    echo "ABORT: drift-gate HARD precondition breach on $sync_branch — main NOT touched. Fix before landing." >&2
+    exit 1
+  fi
+
+  git switch main || abort "could not switch to main (main NOT touched)"
+  if ! git merge --ff-only "$sync_branch"; then
+    echo "ABORT: cannot fast-forward main to $sync_branch — main has diverged since the branch was cut." >&2
+    echo "       Re-run fetch-upstream.sh + 'guarded-merge.sh execute' from current main so the new" >&2
+    echo "       sync branch includes main's commits, then land that. main NOT moved." >&2
+    exit 5
+  fi
+  echo
+  echo "fast-forwarded LOCAL main -> $sync_branch. DID NOT PUSH."
+  echo "verify : bash .claude/skills/merging-upstream/scripts/drift-gate.sh"
+  echo "cleanup: git branch -d $sync_branch   (sync branch kept as an audit trail until you delete it)"
+  exit 0
+fi
+
+[ "$MODE" = "execute" ] || abort "unknown mode '$MODE' (use: plan | execute | land)"
 
 # ---- EXECUTE (guarded) -------------------------------------------------------
 git diff --quiet && git diff --cached --quiet || abort "working tree not clean — commit or stash first"
@@ -126,5 +167,7 @@ fi
 git commit --no-edit
 echo
 echo "merged upstream/main into $branch and committed. DID NOT PUSH."
-echo "verify : bash .claude/skills/merging-upstream/scripts/drift-gate.sh   (expect VERDICT: INVARIANT OK)"
-echo "publish: git push -u origin $branch && gh pr create --base main --fill   (human does this)"
+echo "verify : bash .claude/skills/merging-upstream/scripts/drift-gate.sh"
+echo "review : inspect the branch — git log main..$branch ; git diff main..$branch"
+echo "land   : on your approval, bash .claude/skills/merging-upstream/scripts/guarded-merge.sh land $branch"
+echo "         (fast-forwards LOCAL main onto $branch; never pushes)"
