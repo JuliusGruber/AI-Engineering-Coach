@@ -1,11 +1,13 @@
 // src/standalone/v1-service-allowed.ts
-// The 12 PanelRequestService methods exposed via the standalone service-bridge tier.
+// The 15 PanelRequestService methods exposed via the standalone service-bridge tier.
 // Learning ×4 + Skill ×4 (incl. generateSkillContent) + Context ×1 (= 9, bucket D) +
-// bucket-B writes ×3 (installSkill, installCatalogItem, exportSummary) = 12.
-// Still excludes createSkill (opens VS Code chat, not an LLM call) and the bucket-E methods
-// (getWorkspaceDeps / getSdlc*) that also live in PanelRequestService but are not allowlisted
-// here. See docs-fork/superpowers/spec/2026-05-27-standalone-parity-bucket-d-design.md § C and
-// docs-fork/superpowers/spec/2026-05-29-standalone-parity-bucket-b-design.md § C.
+// bucket-B writes ×3 (installSkill, installCatalogItem, exportSummary) = 12 +
+// bucket-E local scans ×3 (getSdlcToolAnalysis, getSdlcRepoScan, getWorkspaceDeps) = 15.
+// Still excludes createSkill (opens VS Code chat, not an LLM call) and getSdlcGitHubData — the
+// one bucket-E method that needs vscode.authentication + outbound network. See
+// docs-fork/superpowers/spec/2026-05-27-standalone-parity-bucket-d-design.md § C,
+// docs-fork/superpowers/spec/2026-05-29-standalone-parity-bucket-b-design.md § C, and
+// docs-fork/superpowers/spec/2026-05-30-standalone-parity-bucket-e-design.md.
 
 const _inner = new Set<string>([
   'generateLearningQuiz', 'generateCodeComparison', 'generateDidYouKnow', 'generateLearningResources',
@@ -14,6 +16,10 @@ const _inner = new Set<string>([
   // Bucket B — service-tier writes. installSkill/installCatalogItem write via the vscode-stub
   // workspace.fs seam; exportSummary delegates to exportSummaryFiles through the same seam.
   'installSkill', 'installCatalogItem', 'exportSummary',
+  // Bucket E — local-scan reads (agentic SDLC tab + Learning quiz personalization). No vscode,
+  // no network; each self-guards to an empty result when parse hasn't finished. getSdlcGitHubData
+  // stays excluded (needs vscode.authentication + outbound fetch; no call site in page-sdlc.ts).
+  'getSdlcToolAnalysis', 'getSdlcRepoScan', 'getWorkspaceDeps',
 ]);
 
 function _throwMutation(): never {
