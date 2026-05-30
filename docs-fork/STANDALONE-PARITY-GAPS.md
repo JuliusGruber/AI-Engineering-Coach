@@ -32,17 +32,19 @@ get no bucket.)
 
 How the standalone build is assembled: the fork exposes upstream's RPC surface
 through a frozen allowlist (`src/standalone/v1-allowed.ts`) — 52 read/registry
-methods — plus a 12-method LLM service bridge (`v1-service-allowed.ts`) and one
-native method (`openExternal`). It reuses upstream's nav verbatim
+methods — plus a 15-method service bridge (`v1-service-allowed.ts`: LLM features
++ bucket-B writes + bucket-E local scans) and one native method (`openExternal`). It reuses upstream's nav verbatim
 (`standalone-html.ts` swaps the CSP, token, and script tags, then injects an
 "Explore" group with Data Explorer + Rule Playground). What looks "trimmed" is
 usually upstream's own doing: the burndown link is gated by
 `FF_TOKEN_REPORTING_ENABLED`, and several routes (Data Explorer, Rule
 Playground, Rule Editor, SDLC) are deep-link-only with no nav link upstream.
 
-**Status (2026-05-30):** buckets A, B, and D are SHIPPED. Gaps remain across bucket C
-(project-scoped analysis) and bucket E (agentic SDLC). Several "shipped" pages also carry
-residual per-method degradations now tracked inline (see **Per-method degradations**).
+**Status (2026-05-30):** buckets A, B, D, and E (local scans) are SHIPPED. Gaps remain
+across bucket C (project-scoped analysis); within bucket E only `getSdlcGitHubData`
+(GitHub auth/network) stays deferred, plus a per-harness coverage Follow-up for
+repo-scan / deps on Claude / OpenCode. Several "shipped" pages also carry residual
+per-method degradations now tracked inline (see **Per-method degradations**).
 
 ## A. Quick wins — SHIPPED (2026-05-27)
 
@@ -124,8 +126,9 @@ single seam (the `vscode` stub).
   `generateDidYouKnow` / `generateLearningResources`, exposed via the
   `PanelRequestService` bridge (`src/standalone/request-service-bridge.ts`, gated by
   `V1_SERVICE_ALLOWED`). **Caveat:** the Learning page also calls `getWorkspaceDeps`
-  (bucket E, NOT allowlisted) — quiz personalization degrades to generic content
-  (see Per-method degradations).
+  (bucket E, now allowlisted) — quiz personalization uses real deps for Codex / VS
+  Code `workspaceStorage`, and falls back to generic content only for Claude /
+  OpenCode (unresolved workspace root; see Per-method degradations + bucket-E Follow-up).
 - **Skill discovery / triage / generation** ✅ — `discoverCatalog` / `triageCatalog` /
   `triageSkills` / `generateSkillContent` via the same bridge. `createSkill` stays degraded
   (it opens VS Code chat — not an LLM call).
@@ -146,38 +149,57 @@ auto-detected from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. `COACH_LLM_BASE_URL` 
 host you trust. `COACH_LLM_MODEL` / `COACH_LLM_MAX_TOKENS` / `COACH_LLM_TIMEOUT_MS` tune the model,
 output ceiling, and request timeout.
 
-## E. Agentic SDLC — needs the dropped data service rebuilt
+## E. Agentic SDLC
 
-- **SDLC local scans** — repo / tool / dependency analysis across the
-  lifecycle. `getSdlcRepoScan` / `getSdlcToolAnalysis` / `getWorkspaceDeps`
-  are all off every allowlist (verified absent from `v1-allowed.ts`,
-  `v1-service-allowed.ts`, `standalone-native.ts`). The **SDLC tab renders an
-  endless loading state and never resolves** (`page-sdlc.ts:91-92`); the
-  Level-Up SDLC badge call (`page-experiments.ts:221`) silently no-ops. **Med–High**
-  — route these through the request-service bridge. Biggest visible broken surface.
-- **SDLC GitHub data** — `getSdlcGitHubData`. Needs GitHub auth / network.
-  **Hard** — distinct from the local scans.
+- **SDLC local scans** ✅ — repo / tool / dependency analysis across the
+  lifecycle. `getSdlcToolAnalysis` / `getSdlcRepoScan` / `getWorkspaceDeps` are
+  exposed through the request-service bridge (`V1_SERVICE_ALLOWED`, 15 methods;
+  bucket-E design 2026-05-30). The SDLC tab now resolves and renders instead of
+  hanging on its loading screen, and the Level-Up SDLC badge
+  (`page-experiments.ts:221`) populates. **Per-harness caveat:**
+  `getSdlcToolAnalysis` is pure session math and populates for **all** harnesses;
+  `getSdlcRepoScan` / `getWorkspaceDeps` resolve a workspace root only when the
+  parser recorded a `workspaceRootPath` — **only the Codex parser does**
+  (`parser-codex.ts:532`), plus VS Code `workspaceStorage`. For Claude / OpenCode
+  the root is unresolved, so repo-scan and deps return empty (the page shows its
+  "No workspace repos resolved" empty state; quiz personalization stays generic).
+  See Follow-up.
+- **SDLC GitHub data** — `getSdlcGitHubData`. Needs GitHub auth / network
+  (`vscode.authentication.getSession('github', …)` + outbound fetch) and has no
+  call site in `page-sdlc.ts`. **Hard** — the sole remaining deferred bucket-E
+  method.
+
+**Follow-up (tracked separately, NOT in the bucket-E change):** the Claude
+(`parser-claude.ts:668`) and OpenCode (`parser-opencode.ts:293`) parsers don't set
+`workspaceRootPath` the way Codex (`parser-codex.ts:532`) does. A ~2-line portable
+fix (`workspaceRootPath: cwd` / `: rawSession.directory`, guarded by the existing
+`fs.existsSync`) would light up repo-scan + deps + quiz personalization for those
+harnesses. It is shared-`src/` drift (outside `src/standalone/`), so it is an
+upstream-it candidate kept out of the allowlist-only bucket-E change by design.
 
 ## Per-method degradations (within otherwise-shipped pages)
 
 Methods called by a shipping page but absent from all three exposure tiers
 (`V1_ALLOWED` / `V1_SERVICE_ALLOWED` / `STANDALONE_NATIVE`). Verified by grep
-against the allowlist files, 2026-05-30:
+against the allowlist files, 2026-05-30. One row (`getWorkspaceDeps`) is now
+exposed but data-limited per harness — kept here as a coverage caveat, not an
+exposure gap:
 
 | Page (shipped) | Missing method | Call site | Effect | Bucket |
 |---|---|---|---|---|
 | Burndown | `saveModelBudgets`, `loadModelBudgets` | `page-burndown.ts:95,103` | chart works; budgets don't persist across reloads | A |
 | Anti-Patterns | `reviewLocalRules` | `page-antipatterns.ts:1025` | "review pending rules" button errors offline | C |
-| Learning | `getWorkspaceDeps` | `page-learning.ts:686` | quiz personalization falls back to generic content | E |
-| SDLC tab | `getSdlcRepoScan`, `getSdlcToolAnalysis` | `page-sdlc.ts:91-92` | tab loads forever, never renders | E |
+| Learning | `getWorkspaceDeps` | `page-learning.ts:686` | exposed (bucket E); quiz personalization uses real deps for Codex / VS Code, generic for Claude / OpenCode (unresolved root) | E |
 
 ## Priority notes
 
-- **Biggest visible broken surface: the SDLC tab (bucket E)** — allowlist
-  `getSdlcRepoScan` + `getSdlcToolAnalysis` through the request-service bridge.
+- **SDLC tab (bucket E) — SHIPPED (2026-05-30):** `getSdlcToolAnalysis` +
+  `getSdlcRepoScan` + `getWorkspaceDeps` are allowlisted through the request-service
+  bridge; the tab renders (repo-scan column populates for Codex / VS Code, empty for
+  Claude / OpenCode pending the parser Follow-up).
 - **Cheap finishers:** `saveModelBudgets`/`loadModelBudgets` (Burndown),
-  `getWorkspaceDeps` (Learning), `reviewLocalRules` (Anti-Patterns) — small write/
-  read paths that complete already-shipped pages.
+  `reviewLocalRules` (Anti-Patterns) — small write/read paths that complete
+  already-shipped pages.
 
 ## Explicitly excluded (out of scope: not portable / not a feature)
 
