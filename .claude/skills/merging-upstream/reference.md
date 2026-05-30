@@ -39,8 +39,9 @@ fork authorship. The merge-base diff isolates fork authorship from behind-upstre
 **A noisy gate gets ignored.**
 
 Classification, per path in the gate output:
-- **named in `git log $base..HEAD -- <path>`** → deliberate fork edit → upstream it (or
-  move behind a build seam). Never auto-revert.
+- **named in `git log $base..HEAD -- <path>`** → deliberate fork edit in shared `src/`. It
+  **violates the invariant**; remediate (move behind a build seam / upstream it / revert to
+  upstream). Surface the choice — never *silently* auto-revert a real fix.
 - **empty `$base..HEAD` log** → merge-resolution drift → re-merge /
   `git checkout upstream/main -- <path>`.
 
@@ -77,14 +78,19 @@ This is the load-bearing pattern that makes the invariant possible. To flip
 (esbuild → `src/standalone/vscode-stub.ts`, scoped to the CLI entry) is the analogous seam
 for VS Code APIs, so the stub never leaks into the published extension.
 
-## 4. Remediating already-drifted files
+## 4. Remediating drift outside `src/standalone/`
 
-The naive `git diff upstream/main -- src/` over-reports. The **merge-base** diff is the
-truth. As of the last analysis the **deliberate** fork edits outside `src/standalone/`
-are `src/core/metric-engine.ts` (locale pin) + `src/core/parser-codex.test.ts` (test timeout), both commit `44e9532` —
-**upstream it, do not revert.** Other listed core files may be merge-resolution drift
-(re-merge) or, if they carry a real fork commit, deliberate edits to reconcile. `drift-gate.sh`
-classifies each live — trust its output over any snapshot in prose (the live state moves).
+The naive `git diff upstream/main -- src/` over-reports. The **merge-base** diff is the truth.
+The invariant is **zero** fork-authored drift in shared `src/`, and the fork currently carries
+none. If `drift-gate.sh` ever flags a path:
+- **deliberate** (named in `git log $base..HEAD -- <path>`) → it violates the invariant.
+  Remediate: a behavior override goes behind a build seam (§3); a portable bug fix is upstreamed
+  (PR to `microsoft/AI-Engineering-Coach`); otherwise revert to upstream and accept upstream's
+  behavior locally. Surface the choice — never *silently* revert a real fix.
+- **merge-resolution drift** (empty `$base..HEAD` log) → re-merge / `git checkout upstream/main -- <path>`.
+
+`drift-gate.sh` classifies each live — trust its output over any snapshot in prose (the live
+state moves). `land` refuses to advance `main` while any drift remains.
 
 ## 5. Parity-gap algorithm
 

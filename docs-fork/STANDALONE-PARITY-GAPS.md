@@ -16,9 +16,11 @@ against the actual code.
 upstream functionality not exposed/implemented by the standalone build. Git *sync status*
 — how far behind `upstream/main` the fork is — is **not** a parity gap and is **not** tracked
 here; the merge workflow's `fetch-upstream.sh` (behind count) and `drift-gate.sh` own that.
-The fork is additive on top of upstream, plus **2 known fork-*ahead* edits** (`metric-engine.ts`
-locale pin, `parser-codex.test.ts` timeout — commit `44e9532`), tracked under *Fork-authored
-drift* below as upstream-it candidates, not gaps.
+The fork is **purely additive**: every fork-authored line lives in `src/standalone/`, so
+`git diff $(git merge-base HEAD upstream/main) HEAD -- src/ ':(exclude)src/standalone/'` is
+empty. There is **no** fork-*ahead* drift in shared `src/` — behavior overrides go through the
+build seam (esbuild redirect / `vscode` stub), never an edit to a shared file, and
+`drift-gate.sh` enforces this on every sync.
 
 **Bucket convention (append-only ledger).** Buckets (A, B, C, …) are append-only: each is a
 unit of upstream functionality. When a merge surfaces genuinely new upstream functionality the
@@ -155,27 +157,6 @@ output ceiling, and request timeout.
   — route these through the request-service bridge. Biggest visible broken surface.
 - **SDLC GitHub data** — `getSdlcGitHubData`. Needs GitHub auth / network.
   **Hard** — distinct from the local scans.
-
-## Fork-authored drift outside `src/standalone/` (NOT a parity gap)
-
-Deliberate fork-*ahead* edits that live in shared `src/` (drift gate, 2026-05-30). **These
-are not standalone parity gaps and not merge debt** — they are portable fixes the fork should
-PR to `microsoft/AI-Engineering-Coach` rather than carry indefinitely. The drift gate
-classifies both as `DELIBERATE` and proposes upstream-it; **never auto-revert** them — each
-keeps an upstream test green locally.
-
-- `src/core/metric-engine.ts` — `toLocaleString('en-US')` locale pin (commit `44e9532`).
-  Without it `metric-engine.test.ts:435` goes red on non-en-US locales (this machine's Node
-  default formats `1234` as `1 234`, not `1,234`). No upstream overlap → merges clean.
-- `src/core/parser-codex.test.ts` — 120s timeout on the `>MAX_FILE_SIZE` Codex test (commit
-  `44e9532`); the global `testTimeout` is 15s but the test needs ~60s on Windows/slow disks.
-  **Conflict risk:** upstream added +86 lines to this same test file (#67) — keep the fork's
-  timeout *and* upstream's new tests.
-
-> **Reverted 2026-05-30:** `src/webview/panel-request-service.ts`'s Windows `path.join`
-> separator fix (commit `e3be742`) was reverted to match upstream byte-for-byte.
-> `vscode.Uri.file` normalizes separators, so no test depended on it — the fork no longer
-> carries it, and this file is back inside the additive-only invariant.
 
 ## Per-method degradations (within otherwise-shipped pages)
 

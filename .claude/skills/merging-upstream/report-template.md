@@ -106,13 +106,6 @@ methodName: CALLED by a shipped page but NOT exposed -> silent degradation
     src/webview/page-*.ts:NN:  ...call site...
 ```
 
-## [HUMAN] Fork-authored drift outside `src/standalone/` (NOT a parity gap)
-
-Optional. Deliberate fork-*ahead* edits in shared `src/` (from `drift-gate.sh`'s
-`DELIBERATE` classification) — portable fixes the fork carries and should upstream. Listed
-as upstream-it candidates for context; they are fork-ahead, not standalone gaps, and **never
-merge debt**. **Never auto-revert.**
-
 ## [HUMAN] Priority notes
 
 Free-form: what to do next and why, severity (`HIGH`/`Med`), portability calls.

@@ -37,9 +37,10 @@ else
     if [ -n "$log" ]; then
       echo "  DELIBERATE   $f"
       echo "               introduced by: $(echo "$log" | tail -1)"
-      echo "               -> propose: UPSTREAM IT (PR to microsoft/AI-Engineering-Coach), or move"
-      echo "                  the behaviour behind a src/standalone/ build seam. NEVER auto-revert"
-      echo "                  (e.g. metric-engine.ts locale pin / parser-codex.test.ts timeout, commit 44e9532)."
+      echo "               -> VIOLATES additive-only. Remediate before landing: move the behaviour"
+      echo "                  behind a src/standalone/ build seam, UPSTREAM IT (PR to"
+      echo "                  microsoft/AI-Engineering-Coach), or revert to upstream and accept"
+      echo "                  upstream's behaviour locally. Surface the choice — never SILENTLY auto-revert."
     else
       echo "  MERGE-DRIFT  $f"
       echo "               (empty \$base..HEAD log — behind-upstream / merge-resolution noise)"

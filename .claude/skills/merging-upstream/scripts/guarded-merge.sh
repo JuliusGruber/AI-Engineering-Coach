@@ -7,7 +7,8 @@
 #     branch. main advances ONLY via the explicit, separately-approved `land` step, and only
 #     by fast-forward (--ff-only) — never a force, never an auto-merge.
 #   - NEVER auto-resolves conflicts — surfaces them for a human (lean on rerere).
-#   - NEVER auto-reverts the fork's deliberate edits (44e9532) — they are upstream-it candidates.
+#   - NEVER *silently* reverts a fork edit — it surfaces drift outside src/standalone/ and the
+#     remediation choice (build seam / upstream-it / revert) for the human; never auto-destroys a fix.
 #   - NEVER syncs README.md from upstream — always keeps the fork's committed README (KEEP_FROM_FORK).
 #   - Build-as-gate: runs `npm run build:standalone` so the esbuild onEnd 0-redirect
 #     throw catches a constants rename that a pure git-diff would miss.
@@ -55,7 +56,7 @@ if [ "$MODE" = "plan" ]; then
     fi
   done
   echo
-  echo "-- current fork-authored drift to reconcile first (see drift-gate.sh) --"
+  echo "-- current fork-authored drift to reconcile first (must be empty — see drift-gate.sh) --"
   drift=$(git diff --name-only "$base" HEAD -- src/ "$EXCLUDE")
   [ -n "$drift" ] && echo "$drift" | sed 's/^/  /' || echo "  (none)"
   echo
@@ -75,16 +76,22 @@ if [ "$MODE" = "land" ]; then
   git rev-parse --verify "$sync_branch" >/dev/null 2>&1 || abort "no such branch: $sync_branch"
   git diff --quiet && git diff --cached --quiet || abort "working tree not clean — commit or stash first"
 
-  # Re-check the additive-only gate on the branch we're about to land. Block ONLY on a HARD
-  # precondition breach (drift-gate exit 1: constants drift / redirect unwired / shadow leak).
-  # Authorship drift (exit 2 — e.g. the carried 44e9532 edits) is the fork's NORMAL state:
-  # surfaced for awareness, never a blocker. The human already reviewed the branch.
+  # Re-check the additive-only gate on the branch we're about to land. The invariant requires
+  # ZERO drift before main moves, so block on ANYTHING the gate flags:
+  #   exit 1 = HARD precondition breach (constants drift / redirect unwired / shadow leak)
+  #   exit 2 = fork-authored drift outside src/standalone/ (remediate: build seam / upstream-it / revert)
   git switch "$sync_branch" || abort "could not switch to $sync_branch"
   echo "== drift-gate on $sync_branch (precondition re-check before landing) =="
   bash "$(dirname "$0")/drift-gate.sh"; gate_rc=$?
   if [ "$gate_rc" -eq 1 ]; then
     echo "ABORT: drift-gate HARD precondition breach on $sync_branch — main NOT touched. Fix before landing." >&2
     exit 1
+  fi
+  if [ "$gate_rc" -eq 2 ]; then
+    echo "ABORT: fork-authored drift outside src/standalone/ on $sync_branch — the additive-only" >&2
+    echo "       invariant requires zero drift before main moves. Remediate (move the behaviour behind a" >&2
+    echo "       src/standalone/ build seam, upstream it, or revert to upstream), then land. main NOT touched." >&2
+    exit 2
   fi
 
   git switch main || abort "could not switch to main (main NOT touched)"
@@ -146,14 +153,15 @@ if [ "$merge_rc" -ne 0 ] && [ -z "$unmerged_before" ]; then
   abort "merge failed for a non-conflict reason"
 fi
 
-# VALIDATE before committing: staged tree outside src/standalone/ should match upstream/main.
-# A non-empty list is EXPECTED only for deliberate carried edits (e.g. the 44e9532 core edits) —
-# surface it, do not silently proceed, do not auto-revert.
+# VALIDATE before committing: the staged tree outside src/standalone/ MUST match upstream/main.
+# The fork is additive, so this should be EMPTY. A non-empty list means a core conflict was
+# resolved toward the fork (or pre-existing drift slipped in) — resolve toward upstream now;
+# `land` re-runs the drift gate and refuses to land any drift.
 offenders=$(git diff --name-only --cached upstream/main -- src/ "$EXCLUDE")
 if [ -n "$offenders" ]; then
-  echo "REVIEW: staged tree differs from upstream/main outside src/standalone/:"
+  echo "REVIEW: staged tree differs from upstream/main outside src/standalone/ (must be empty):"
   echo "$offenders" | sed 's/^/  /'
-  echo "        (OK only if these are deliberate carried fork edits; otherwise resolve toward upstream)"
+  echo "        Resolve these toward upstream before committing — land will refuse the drift."
 fi
 
 # BUILD GATE — the FF-redirect onEnd self-guard (esbuild.mjs) throws on 0 redirects,

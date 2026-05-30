@@ -46,10 +46,12 @@ Run everything from the repo root.
 
 2. **DRIFT GATE** — Run `bash .claude/skills/merging-upstream/scripts/drift-gate.sh`.
    It classifies every path outside `src/standalone/`:
-   - `DELIBERATE` (named in `git log base..HEAD`) → propose **upstream it** (PR to
-     microsoft/AI-Engineering-Coach) or move the behavior behind a `src/standalone/`
-     build seam. **NEVER auto-revert** — the fork carries 2 deliberate edits (commit `44e9532`):
-     the `metric-engine.ts` locale pin + `parser-codex.test.ts` timeout, kept to keep local tests green.
+   - `DELIBERATE` (named in `git log base..HEAD`) → a fork commit edited shared `src/`. This
+     **violates the additive-only invariant** and must be remediated before landing: move the
+     behavior behind a `src/standalone/` build seam, **upstream it** (PR to
+     microsoft/AI-Engineering-Coach), or revert it to upstream and accept upstream's behavior
+     locally. Surface the choice to the human — **never *silently* auto-revert** a real fix.
+     The fork currently carries **zero** such edits; keep it that way.
    - `MERGE-DRIFT` (empty `base..HEAD` log) → propose **re-merge** /
      `git checkout upstream/main -- <file>`.
    A `PRECONDITION BREACH` (exit 1) is hard — fix before merging.
@@ -93,8 +95,9 @@ Run everything from the repo root.
 
 8. **LAND (only on explicit approval)** — When the human approves, run
    `bash .claude/skills/merging-upstream/scripts/guarded-merge.sh land <branch>`. It requires a
-   clean tree, re-checks the drift gate (blocking only on a **HARD precondition breach** — the
-   fork's normal authorship drift from `44e9532` is surfaced, not blocked), and **fast-forwards
+   clean tree, re-checks the drift gate (blocking on **any** drift it finds — a **HARD
+   precondition breach** *or* fork-authored drift outside `src/standalone/`; the additive-only
+   invariant requires **zero** drift before `main` moves), and **fast-forwards
    LOCAL `main`** onto the reviewed branch (`--ff-only`: it refuses, never force-merges, if
    `main` has moved). It **never pushes**. The sync branch is kept as an audit trail until the
    human deletes it (`git branch -d <branch>`).
@@ -119,7 +122,8 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 - **Never *auto*-merges onto `main`** — `execute` only ever lands on a `sync/upstream-<date>`
   branch. `main` advances solely through the explicit, separately-approved `land` step, and
   only by **fast-forward** (`--ff-only`) — never a force, never an auto-merge.
-- **Never auto-reverts** the fork's deliberate edits (`44e9532`) — it proposes upstreaming them.
+- **Never *silently* reverts** a fork edit — it surfaces drift outside `src/standalone/` and the
+  remediation choice (build seam / upstream-it / revert-to-upstream) for the human to decide.
 - **Never syncs `README.md`** — the fork's README is always kept and upstream's discarded (the
   `KEEP_FROM_FORK` pin). README is outside the `src/` drift gate, so this never affects the invariant.
 - **Surfaces conflicts** rather than auto-favoring a side (except a generated/lock file).
@@ -148,9 +152,10 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 
 - **Gating on `upstream/main` instead of the merge-base** → ~16 false positives; the gate
   gets ignored. Always use `git merge-base HEAD upstream/main`.
-- **Reverting the `44e9532` core edits** (`metric-engine.ts` locale pin, `parser-codex.test.ts`
-  timeout) → turns `metric-engine.test.ts` / the Codex large-file test red locally on non-en-US
-  or slow-disk machines. Upstream them instead.
+- **Carrying a fork fix in shared `src/` (outside `src/standalone/`)** → breaks the additive-only
+  invariant; `drift-gate.sh` flags it and `land` refuses it. A behavior override belongs behind a
+  build seam; a portable bug fix should be upstreamed (PR to microsoft/AI-Engineering-Coach). If
+  neither fits, revert to upstream and accept upstream's behavior locally — don't carry the edit.
 - **Editing a shared core file to change behavior** → breaks the invariant. Add a
   standalone-only re-export + an esbuild `onResolve` redirect (see `reference.md`).
 - **Trusting an allowlist header comment for counts** → count the Set *literally*;
@@ -166,9 +171,10 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 - **Pushing, or *auto*-merging onto `main`** → never. The skill stops at a reviewed
   `sync/upstream-<date>` branch; `main` only moves via the explicit `land` follow-up
   (fast-forward, local-only) after the human approves. Never push.
-- **Making `land` block on the fork's normal authorship drift** → `drift-gate.sh` exits `2`
-  whenever fork edits live outside `src/standalone/`, which is *always* true here (the `44e9532`
-  edits). `land` must block only on exit `1` (HARD precondition breach), never on exit `2`.
+- **Letting `land` wave through drift outside `src/standalone/`** → the additive-only invariant
+  requires **zero** drift before `main` moves. `land` blocks on `drift-gate.sh` exit `1` (HARD
+  precondition breach) **and** exit `2` (fork-authored drift). Remediate the drift (build seam /
+  upstream-it / revert) before landing — never land over it.
 
 For the invariant, the override seam, and the parity algorithm in full, read `reference.md`.
 For the report format, use `report-template.md`.
