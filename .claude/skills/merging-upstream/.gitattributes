@@ -1,0 +1,5 @@
+# The helper scripts are run by bash (msys/git-bash) and node; CRLF would put a
+# stray \r in shebangs and string comparisons and break them. Pin to LF regardless
+# of the user's core.autocrlf. Scoped to this skill dir only — no upstream-shared file.
+*.sh   text eol=lf
+*.mjs  text eol=lf

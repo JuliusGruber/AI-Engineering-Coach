@@ -137,7 +137,7 @@ export function renderBurndown(container: HTMLElement, currentFilter: DateFilter
   }
 
   // Load disk-persisted budgets on first render
-  loadModelBudgetsFromDisk();
+  void loadModelBudgetsFromDisk();
 
   const now = new Date();
 
@@ -194,7 +194,7 @@ export function renderBurndown(container: HTMLElement, currentFilter: DateFilter
     // Auto-discover models on first render
     if (!modelsLoaded) {
       render(html`<div class="budget-loading">Loading models\u2026</div>`, target);
-      fetchHistoricalBudgets().then(peak => {
+      void fetchHistoricalBudgets().then(peak => {
         discoveredModels = peak;
         modelsLoaded = true;
         // Seed modelBudgets with discovered models (keep existing budgets)

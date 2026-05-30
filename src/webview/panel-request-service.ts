@@ -292,7 +292,7 @@ Generate 3 ${context.difficulty} interview-style questions tailored to this deve
     const prompt = isString(params.prompt) ? params.prompt : '';
     if (!prompt) return;
 
-    vscode.commands.executeCommand('workbench.action.chat.open', {
+    void vscode.commands.executeCommand('workbench.action.chat.open', {
       query: prompt,
     }).then(
       () => postResponse(this.webview, msg.id, { ok: true }),
@@ -612,7 +612,7 @@ Respond with a JSON object: {"items":[{"title":"...","url":"https://...","type":
         postError(this.webview, msg.id, 'Cannot determine home directory');
         return;
       }
-      const targetUri = vscode.Uri.file(`${homeDir}/.agents/skills/${filename}`);
+      const targetUri = vscode.Uri.file(path.join(homeDir, '.agents', 'skills', filename));
       await vscode.workspace.fs.writeFile(targetUri, Buffer.from(content, 'utf8'));
       postResponse(this.webview, msg.id, { ok: true, path: targetUri.fsPath });
     } catch (error: unknown) {
@@ -648,7 +648,7 @@ Respond with a JSON object: {"items":[{"title":"...","url":"https://...","type":
       const filename = catalogPath.split('/').pop() || `${slug}.md`;
       if (slug.includes('..') || filename.includes('..')) throw new Error('Invalid path');
 
-      const targetUri = vscode.Uri.file(`${homeDir}/.agents/${subDir}/${slug}/${filename}`);
+      const targetUri = vscode.Uri.file(path.join(homeDir, '.agents', subDir, slug, filename));
       await vscode.workspace.fs.writeFile(targetUri, Buffer.from(content, 'utf8'));
       postResponse(this.webview, msg.id, { content, filename: `${slug}/${filename}` });
     } catch (error: unknown) {

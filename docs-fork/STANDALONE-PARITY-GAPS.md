@@ -3,23 +3,41 @@
 Features that exist in the upstream extension (`microsoft/AI-Engineering-Coach`
 main) but are **not yet exposed by this fork's standalone build**. Scope:
 *portable* gaps only — things that could run in a browser. VS Code-only
-surfaces (activity-bar sidebar) and pure infra (devcontainer, CI, dep bumps,
-security CSP/XSS branches) are excluded.
+surfaces (activity-bar sidebar, the `@aicoach` chat participant, MCP tools) and
+pure infra (devcontainer, CI, dep bumps, security CSP/XSS branches) are
+excluded.
 
-**Derived:** 2026-05-27, against upstream HEAD `abc0a6c`. The fork is
-additive-only — it ships all upstream source untouched (verified: `git diff
-upstream/main` is empty across `src/` outside `src/standalone/`), then exposes
-it through a frozen 40-method allowlist (`src/standalone/v1-allowed.ts`). It
-reuses upstream's nav verbatim — `standalone-html.ts` only swaps the CSP,
-token, and script tags. What looks "trimmed" is upstream's own doing: the
-burndown link is gated by `FF_TOKEN_REPORTING_ENABLED`, and several routes
-(Data Explorer, Rule Playground, Rule Editor, SDLC) are deep-link-only with no
-nav link upstream. Everything below is in upstream's `RpcMethodMap` /
-`ExtensionMethodMap` (`src/core/types/rpc-types.ts`) but off the allowlist,
-flag-gated, or deep-link-only. Difficulty tags are estimates; each item names
-the blocker.
+**Derived** `1fef41a` (merge-base) → **re-verified** `3a41450` (upstream/main),
+**67 behind** (`parity-gap.mjs`, 2026-05-30). If `git rev-parse upstream/main` ≠
+`3a41450`, regenerate. (The original 2026-05-27 derivation was against the older
+upstream head `abc0a6c`; the merge-base has since advanced to `1fef41a`.) Every
+claim below was re-checked against the actual code in both git trees.
 
-~18 gaps across 5 buckets.
+**Foundational correction (2026-05-30).** Earlier revisions of this doc claimed
+the fork was *"additive-only — it ships all upstream source untouched (`git diff
+upstream/main` is empty across `src/` outside `src/standalone/`)."* **That is no
+longer true.** It held at `abc0a6c`, but upstream has since moved ahead and the
+fork has not merged the delta. `git diff upstream/main -- src/ ':!src/standalone/'`
+is now **non-empty**, and some of that drift is portable and affects the
+standalone UI's data and load behavior (see **Bucket F — merge debt**, the
+highest-leverage section in this doc). The fork is therefore *additive on top of
+a now-stale base*, not additive on top of current upstream.
+
+How the standalone build is assembled: the fork exposes upstream's RPC surface
+through a frozen allowlist (`src/standalone/v1-allowed.ts`) — 52 read/registry
+methods — plus a 12-method LLM service bridge (`v1-service-allowed.ts`) and one
+native method (`openExternal`). It reuses upstream's nav verbatim
+(`standalone-html.ts` swaps the CSP, token, and script tags, then injects an
+"Explore" group with Data Explorer + Rule Playground). What looks "trimmed" is
+usually upstream's own doing: the burndown link is gated by
+`FF_TOKEN_REPORTING_ENABLED`, and several routes (Data Explorer, Rule
+Playground, Rule Editor, SDLC) are deep-link-only with no nav link upstream.
+
+**Status (2026-05-30):** buckets A, B, and D are SHIPPED; gaps remain across
+bucket C (project-scoped analysis), bucket E (agentic SDLC), and the newly
+documented bucket F (merge debt vs upstream). Several "shipped" pages also carry
+residual per-method degradations now tracked inline (see **Per-method
+degradations**).
 
 ## A. Quick wins — SHIPPED (2026-05-27)
 
@@ -31,58 +49,63 @@ All four exposed in the standalone build. Note: only two were genuinely
   no infra.
 - **Rule Playground (eval)** ✅ — `evaluateExpression` added to the allowlist and a
   nav link injected (same "Explore" group). Pure-core. `compileNlRule` (NL→rule,
-  bucket D) and `saveRule` (bucket B) remain disabled and degrade gracefully.
-- **Burndown** ✅ — NOT an allowlist gap (its RPC methods were already allowlisted);
-  gated by `FF_TOKEN_REPORTING_ENABLED = false` in shared core. Exposed via a
-  **standalone-only** override: `src/standalone/standalone-constants.ts` re-exports
+  bucket D) and `saveRule` (bucket B) are also shipped.
+- **Burndown (chart)** ✅ — NOT an allowlist gap (its read RPC methods were already
+  allowlisted); gated by `FF_TOKEN_REPORTING_ENABLED = false` in shared core. Exposed
+  via a **standalone-only** override: `src/standalone/standalone-constants.ts` re-exports
   core constants with the flag flipped, and an esbuild `onResolve` plugin redirects
   `core/constants` to it for the standalone CLI bundle + a new
-  `dist/standalone/webview/app.js`. The published extension stays FF=false. (So the
-  original "flip the one flag" framing was wrong — the flag is shared between the
-  extension and standalone via one bundle.)
+  `dist/standalone/webview/app.js`. The published extension stays FF=false.
+  **Caveat:** the chart renders, but **model-budget save/load is still degraded** —
+  see Per-method degradations (`saveModelBudgets` / `loadModelBudgets`).
 - **Output token breakdown** ✅ — same `FF_TOKEN_REPORTING_ENABLED` override; the
   Output page now renders its "Token Usage" tab in standalone.
 
-## B. Rule & skill authoring — needs a write path (v1 is read-only)
+## B. Rule & skill authoring — SHIPPED (2026-05-27, write path landed)
 
-- **Rule Editor** — create / edit / tune / live-test rules.
-  `getRuleEditor` / `getRuleSource` / `saveRule` / `updateRuleThreshold` /
-  `testRuleLive`. **Med** — write to `~/.ai-engineer-coach/rules/` + shim the
-  `require('vscode')` in `getRuleEditor`.
-- **Anti-Patterns Editor** — editable markdown rules + threshold tuning (the
-  read-only Anti-Patterns page already ships). Shares `saveRule` /
-  `updateRuleThreshold`. **Med**.
-- **Export Summary** — Markdown / JSON summary export. `exportSummary` is
-  neither allowlisted nor reimplemented natively (only `openExternal` is in
-  `STANDALONE_NATIVE`). The README "Share" export claim is inherited from the
-  extension. **Easy–Med** — replace the VS Code save-dialog with a browser
-  download / dir-write.
-- **Skill install** — install a skill / catalog item to disk.
-  `installSkill` / `installCatalogItem`. **Med** — write path.
-- **Import registry rules** — surface built-in catalog rules for import/review.
-  `importRegistryRules` is off the allowlist, but (exception to this bucket's
-  "needs write path" premise) its handler is **read-only** — it returns the
-  built-in rules list and writes nothing (`panel-rpc.ts:1242`) — and is not
-  currently wired to any webview page. **Easy** — allowlist it as-is; a true
-  "import into your rule set" write flow would reuse `saveRule` (Med).
+The earlier version of this section described every item below as an unshipped
+gap. That was stale: the write path landed and all of these are now allowlisted.
+Corrected status:
+
+- **Rule Editor** ✅ — create / edit / tune / live-test rules.
+  `getRuleEditor` / `getRuleSource` / `getRulePreview` / `saveRule` /
+  `updateRuleThreshold` / `testRuleLive` all in `V1_ALLOWED` (`v1-allowed.ts`).
+  `saveRule` writes via Node fs; `getRuleEditor` accepts the graceful
+  `require('vscode')` fallback (`workspaceRoot → undefined → personal+builtin`).
+- **Anti-Patterns Editor** ✅ — editable markdown rules + threshold tuning via the
+  same `saveRule` / `updateRuleThreshold`. Reached by the rule-editor modal
+  (`page-antipatterns-editor.ts`).
+- **Export Summary** ✅ — `exportSummary` is allowlisted in `v1-service-allowed.ts`
+  and routed through the request-service bridge (writes via `COACH_EXPORT_DIR` /
+  browser download). *(Correction: the prior claim "neither allowlisted nor
+  reimplemented natively" was wrong.)*
+- **Skill install** ✅ — `installSkill` / `installCatalogItem` allowlisted in
+  `v1-service-allowed.ts` and routed through the bridge.
+- **Import registry rules** ✅ — `importRegistryRules` allowlisted (read-only handler,
+  `panel-rpc.ts:1242`). Exposed forward-only; no standalone UI page calls it yet.
+
+> A true "import into your rule set" write flow would still reuse `saveRule`
+> (already shipped) — only the UI wiring is missing, not the capability.
 
 ## C. Project-scoped analysis — needs a project route + browser trust
 
 - **Project-scoped rules** (`coach --project <path>`) — evaluate a specific
   repo against project-layer rules. Core `rule-loader` already accepts
   `workspaceRoot`; just needs a route to set it. **Med**.
-- **Local-rule trust approval** — `reviewLocalRules`; gate untrusted local
-  rule files. Was a VS Code quick-pick (`extension.ts:79`) backed by the
-  extension's `globalState` Memento (`rule-trust.ts:44`, key
-  `aiEngineerCoach.ruleTrust.v1`) — *not* a file. Reimplement as a browser
-  modal with a standalone-side store (e.g. a `trust.json`). **Med** (tied to
-  project rules).
+- **Local-rule trust approval** — `reviewLocalRules` (NOT allowlisted; verified
+  absent from all three tiers). Was a VS Code quick-pick (`extension.ts:79`)
+  backed by the extension's `globalState` Memento (`rule-trust.ts:44`, key
+  `aiEngineerCoach.ruleTrust.v1`) — *not* a file. Reimplement as a browser modal
+  with a standalone-side store (e.g. a `trust.json`). **Med**.
+  **Note:** this isn't purely project-scoped — it is wired to a live button on
+  the already-shipped Anti-Patterns page (`page-antipatterns.ts:1025`), so its
+  absence degrades a shipped surface (see Per-method degradations).
 
 ## D. LLM-backed tier — SHIPPED (2026-05-27)
 
 The "LLM provider wiring" enabler plus all four feature groups are exposed in the
-standalone build. The four groups were NOT uniform: they split across two delivery
-mechanisms behind a single seam (the `vscode` stub).
+standalone build. The four groups split across two delivery mechanisms behind a
+single seam (the `vscode` stub).
 
 - **Enabler** ✅ — `vscode.lm` is implemented in `src/standalone/vscode-stub.ts` over a new
   `src/standalone/llm-provider.ts` (Anthropic/OpenAI, non-streaming single-fetch, auto-detected
@@ -90,27 +113,25 @@ mechanisms behind a single seam (the `vscode` stub).
   `COACH_LLM_MAX_TOKENS` overrides). One seam lights up BOTH `panel-llm.ts` and
   `core/rule-compiler.ts` with zero edits to either.
 - **NL-rule features** ✅ — `explainOccurrence` / `generateRule` / `compileNlRule` are
-  registry handlers, now allowlisted (`V1_ALLOWED` 42 → 45). `compileNlRule` degrades to a
+  registry handlers, allowlisted (`V1_ALLOWED`). `compileNlRule` degrades to a
   heuristic template offline (never errors); `generateRule` has a template fallback.
 - **Learning Center** ✅ — `generateLearningQuiz` / `generateCodeComparison` /
-  `generateDidYouKnow` / `generateLearningResources`, exposed via the new
+  `generateDidYouKnow` / `generateLearningResources`, exposed via the
   `PanelRequestService` bridge (`src/standalone/request-service-bridge.ts`, gated by
-  `V1_SERVICE_ALLOWED`).
+  `V1_SERVICE_ALLOWED`). **Caveat:** the Learning page also calls `getWorkspaceDeps`
+  (bucket E, NOT allowlisted) — quiz personalization degrades to generic content
+  (see Per-method degradations).
 - **Skill discovery / triage / generation** ✅ — `discoverCatalog` / `triageCatalog` /
   `triageSkills` / `generateSkillContent` via the same bridge. `createSkill` stays degraded
   (it opens VS Code chat — not an LLM call).
 - **AI context-file review** ✅ — `reviewContextFiles` via the bridge; its `reviewProgress`
   event is forwarded over WebSocket to the requesting socket (per-socket `emitEvent`).
 
-**Out of scope (documented degradations, not regressions):** `createSkill` (VS Code chat);
-`installSkill` / `installCatalogItem` / `exportSummary` (bucket B write path);
-`getWorkspaceDeps` / `getSdlc*` (bucket E — the bridge enables these later but they are not
-allowlisted here). With no API key, LLM-backed methods surface a standalone hint — *"Set
-ANTHROPIC_API_KEY or OPENAI_API_KEY to enable AI features."* (the upstream "No language model
-available … Copilot" string is rewritten by `src/standalone/llm-unavailable.ts`); `compileNlRule`
-and `generateRule` silently fall back to a heuristic/template instead. `generateRule` is reachable
-via the anti-patterns "New Rule" modal, but its Save/Test actions stay degraded (write path /
-`runRuleTests` not allowlisted).
+**Documented degradations (not regressions):** `createSkill` (VS Code chat). With no API key,
+LLM-backed methods surface a standalone hint — *"Set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable
+AI features."* (the upstream "No language model available … Copilot" string is rewritten by
+`src/standalone/llm-unavailable.ts`); `compileNlRule` and `generateRule` silently fall back to a
+heuristic/template instead.
 
 **Data flow & configuration (transparency).** AI features send your prompts, code snippets, and —
 for context review — your instruction-file contents (`CLAUDE.md` and friends) to the configured LLM
@@ -124,20 +145,101 @@ output ceiling, and request timeout.
 
 - **SDLC local scans** — repo / tool / dependency analysis across the
   lifecycle. `getSdlcRepoScan` / `getSdlcToolAnalysis` / `getWorkspaceDeps`
-  lived in the dropped `PanelRequestService`; the page currently renders
-  empty. **Med–High** — rebuild the bridge.
+  are all off every allowlist (verified absent from `v1-allowed.ts`,
+  `v1-service-allowed.ts`, `standalone-native.ts`). The **SDLC tab renders an
+  endless loading state and never resolves** (`page-sdlc.ts:91-92`); the
+  Level-Up SDLC badge call (`page-experiments.ts:221`) silently no-ops. **Med–High**
+  — route these through the request-service bridge. Biggest visible broken surface.
 - **SDLC GitHub data** — `getSdlcGitHubData`. Needs GitHub auth / network.
   **Hard** — distinct from the local scans.
 
+## F. Merge debt — fork is behind upstream (NEW, 2026-05-30)
+
+The fork branched before upstream's recent main advanced (`abc0a6c` →
+`3a41450`, 29 commits). The fork's working tree is **missing** the portable
+changes below. These are not standalone-shim gaps — they are upstream `src/`
+features the fork never merged, and the fastest fix for the first two is a plain
+`git merge upstream/main`.
+
+- **#53 — blank dashboard for non-VS-Code harnesses** 🔴 **HIGH / most impactful.**
+  Upstream added `hasExternalHarnessSources()` (`parser-harnesses.ts`) and a load
+  gate in `panel.ts:207`. The fork lacks both: `panel.ts:210` still aborts with
+  `"No Copilot chat log directories found."` whenever no VS Code Copilot directory
+  exists. A standalone user on a box with **only** Claude Code / Codex / OpenCode
+  logs (`~/.claude/projects`, etc.) and no VS Code workspace storage sees a blank
+  dashboard. Upstream loads it. This is the single highest-leverage portable gap
+  and was absent from this doc until now because it postdates `abc0a6c`. **Fix:** merge.
+- **#67 — Codex `skillsUsed` undercount** 🟠 Med. Upstream added Codex skill
+  extraction (`collectSkillsFromArgs`, `extractSkillPathsFromText` in
+  `parser-codex.ts` / `parser-shared.ts`); the fork lacks them, so the standalone
+  Dashboard / Tool-Mastery metrics undercount skill invocations for Codex sessions.
+  **Fix:** merge.
+- **~~Locale-pinned rule serialization~~ — CORRECTED 2026-05-30: fork-*ahead* drift, not debt.**
+  The prior revision claimed upstream pinned `toLocaleString('en-US')` in `metric-engine.ts`
+  and the fork lacked it. The reverse is true: the **fork** pinned it (commit `44e9532`,
+  2026-05-28) and **upstream HEAD is still unpinned** —
+  `git diff 1fef41a upstream/main -- src/core/metric-engine.ts` is empty. It is a
+  fork-authored correctness fix to **upstream**, tracked below under *Fork-authored drift*.
+  A merge will NOT touch this hunk (upstream never changed the file). The drift gate
+  (2026-05-30) flags it as `DELIBERATE` → upstream-it.
+- **VS Code-only delta (excluded, listed for completeness):** `src/chat/*`
+  (`@aicoach` chat participant) and `src/mcp/*` (13 Language Model tools) — the
+  fork is missing these too, but they require the VS Code chat sidebar / MCP host
+  and have no standalone equivalent. Not a standalone-UI gap.
+
+> **Merge-cleanliness caveat:** the fork's `src/standalone/` work is orthogonal to this
+> delta. Expected conflicts are confined to two fork-authored files (see *Fork-authored
+> drift* below): `parser-codex.test.ts` (upstream +86 lines, #67) and
+> `panel-request-service.ts` (upstream 1 line) — resolve both toward keeping the fork's
+> fix *and* upstream's additions. `metric-engine.ts` will NOT conflict (upstream never
+> touched it since the merge-base). After merging, verify the standalone constants
+> `onResolve` override and the `standalone-html.ts` nav-boundary assertions still hold.
+
+### Fork-authored drift outside `src/standalone/` (upstream-it candidates — fork is *ahead*)
+
+Three deliberate edits live in shared `src/` (drift gate, 2026-05-30). **None are merge
+debt** — each is a portable correctness fix the fork should PR to
+`microsoft/AI-Engineering-Coach` rather than carry indefinitely. The drift gate classifies
+all three as `DELIBERATE` and proposes upstream-it; **never auto-revert** them.
+
+- `src/core/metric-engine.ts` — `toLocaleString('en-US')` locale pin (commit `44e9532`).
+  No upstream overlap → merges clean.
+- `src/core/parser-codex.test.ts` — 120s timeout on the `>MAX_FILE_SIZE` Codex test (slow
+  on Windows), commit `44e9532`. **Conflict risk:** upstream added +86 lines to this same
+  test file (#67) — keep the fork's timeout *and* upstream's new tests.
+- `src/webview/panel-request-service.ts` — Windows `path.join` separator fix (commit
+  `e3be742`). **Conflict risk:** upstream changed 1 line here — resolve toward keeping the
+  `path.join` fix; reverting it re-breaks `service-writes.test.ts` on Windows.
+
+## Per-method degradations (within otherwise-shipped pages)
+
+Methods called by a shipping page but absent from all three exposure tiers
+(`V1_ALLOWED` / `V1_SERVICE_ALLOWED` / `STANDALONE_NATIVE`). Verified by grep
+against the allowlist files, 2026-05-30:
+
+| Page (shipped) | Missing method | Call site | Effect | Bucket |
+|---|---|---|---|---|
+| Burndown | `saveModelBudgets`, `loadModelBudgets` | `page-burndown.ts:95,103` | chart works; budgets don't persist across reloads | A |
+| Anti-Patterns | `reviewLocalRules` | `page-antipatterns.ts:1025` | "review pending rules" button errors offline | C |
+| Learning | `getWorkspaceDeps` | `page-learning.ts:686` | quiz personalization falls back to generic content | E |
+| SDLC tab | `getSdlcRepoScan`, `getSdlcToolAnalysis` | `page-sdlc.ts:91-92` | tab loads forever, never renders | E |
+
 ## Priority notes
 
-- Fastest visible parity bump: **bucket A** (4 items: 2 allowlist/nav
-  additions, 2 covered by flipping `FF_TOKEN_REPORTING_ENABLED`).
-- Biggest single unlock: **D's LLM enabler** — lights up ~13 methods (4 learning
-  + 5 skill + 1 context + 3 NL-rule) across 4 pages on its own.
+- **Highest leverage now: merge `upstream/main` (bucket F).** Fixes #53 (the
+  blank-dashboard gap) and #67 in one step — and restores the "additive on top of
+  current upstream" invariant this doc originally assumed. (Locale pinning is **not**
+  fixed by the merge — the fork already has it and upstream does not; upstream-it instead.)
+- **Biggest visible broken surface: the SDLC tab (bucket E)** — allowlist
+  `getSdlcRepoScan` + `getSdlcToolAnalysis` through the request-service bridge.
+- **Cheap finishers:** `saveModelBudgets`/`loadModelBudgets` (Burndown),
+  `getWorkspaceDeps` (Learning), `reviewLocalRules` (Anti-Patterns) — small write/
+  read paths that complete already-shipped pages.
 
 ## Explicitly excluded (out of scope: not portable / not a feature)
 
 - VS Code activity-bar sidebar (no browser equivalent).
+- `@aicoach` chat participant (`src/chat/*`) and MCP Language Model tools
+  (`src/mcp/*`) — require the VS Code chat sidebar / MCP host.
 - Infra: devcontainer setup, metric/rule-engine unit-test branch, security
   CSP / XSS fixes, dependency bumps.
