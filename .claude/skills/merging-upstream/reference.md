@@ -109,11 +109,16 @@ classifies each live — trust its output over any snapshot in prose (the live s
   - *Under-reports called-but-unallowlisted degradations* — `saveModelBudgets` /
     `getWorkspaceDeps` are *called* by shipped pages yet not allowlisted, so they degrade
     silently. → the call-site cross-reference (the degradations table) catches these.
-- **What stays human:** bucket A–F assignment, difficulty/severity, portability
-  (shimmable vs vscode-only), the scope-exclusion list, and all Effect/Priority prose.
-  Bucket F (merge debt) is invisible to the allowlist diff — it needs the
-  `git diff --stat <base> HEAD` derivation. The script **proposes** from auto-signals; a
-  human finalizes.
+- **What stays human:** feature-bucket assignment, difficulty/severity, portability
+  (shimmable vs vscode-only), the scope-exclusion list, and all Effect/Priority prose. New
+  **non-RPC** upstream functionality is invisible to the allowlist diff — catch it with a
+  **features-only** scan of `git diff <base> upstream/main` (exclude bug fixes, refactors,
+  dep bumps, tests, infra, VS Code-only surfaces) and **append it as a new lettered bucket**.
+  The bucket list is an **append-only ledger**: never renumber or delete a bucket; one bucket
+  per feature; an implemented bucket is marked `SHIPPED (<date>)` **in place** by the
+  implementing agent. **Never a "merge debt" bucket** — how far behind upstream the fork is,
+  is a *sync status* (`fetch-upstream.sh` / `drift-gate.sh`), not a parity gap. The script
+  **proposes** from auto-signals; a human finalizes.
 - **Staleness:** the script banners `derived <base> → re-verified <upstream_head>, <n> behind`.
   If `git rev-parse upstream/main` ≠ the doc's derived SHA, regenerate.
 

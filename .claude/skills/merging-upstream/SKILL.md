@@ -59,9 +59,19 @@ Run everything from the repo root.
    ("allowlist decision needed").
 
 4. **DRAFT REPORT** — Regenerate `docs-fork/STANDALONE-PARITY-GAPS.md` from
-   `report-template.md`, filling the auto sections from step 3's output. **Preserve the
-   existing bucket A–F structure**; leave bucket-letter / difficulty / Effect / Priority
-   as `TODO` for a human. Flag newly-appeared upstream methods explicitly.
+   `report-template.md`, filling the auto sections from step 3's output. The report tracks
+   **functional parity only** — upstream functionality not exposed/implemented in
+   `src/standalone/`. **Preserve every existing bucket** (the ledger is append-only — A–E
+   today, more as merges surface features); leave bucket-letter / difficulty / Effect /
+   Priority as `TODO` for a human. Flag newly-appeared upstream methods
+   explicitly. **Never add a "merge debt" / "fork is behind upstream" bucket** — being behind
+   is a *sync status* (step 1's `behind` count, step 2's drift gate), not a parity gap. When
+   upstream is ahead, scan the delta (`git diff <merge-base> upstream/main`) for genuinely
+   **new functionality** — features only, **excluding** bug fixes, refactors, dep bumps,
+   tests, infra, and VS Code-only surfaces — and, for each new feature `src/standalone/`
+   doesn't implement, **append a new lettered bucket**. The bucket list is an **append-only
+   ledger**: never renumber or delete a bucket; one bucket per feature; an implemented bucket
+   is marked `SHIPPED (<date>)` **in place** by the implementing agent, never removed.
 
 5. **ASK** — Present the drift classification + the gap delta. **STOP and ask the human
    before merging.** Preview with
@@ -107,8 +117,10 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 
 - **Low (scripts, run exactly):** the deterministic, dangerous git plumbing — fetch,
   merge-base diff, set-difference, the build self-guard. Only output enters context.
-- **High (your judgment):** drift classification (upstream-it vs re-merge), parity
-  bucketing (A–F), the report narrative, conflict triage.
+- **High (your judgment):** drift classification (upstream-it vs re-merge), **appending** a
+  new feature bucket per surfaced upstream feature (append-only ledger — never renumber/delete),
+  is-this-a-feature vs a fix/refactor when scanning the upstream delta, the report narrative,
+  conflict triage.
 
 ## Scripts
 
@@ -130,6 +142,14 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
   standalone-only re-export + an esbuild `onResolve` redirect (see `reference.md`).
 - **Trusting an allowlist header comment for counts** → count the Set *literally*;
   `parity-gap.mjs` strips comments first so `require('vscode')` can't inflate the count.
+- **Adding a "merge debt" / "fork is behind upstream" bucket to the parity report** → being
+  behind is a *sync status* (step 1's `behind` count + the drift gate), not a standalone
+  parity gap. Only add to `STANDALONE-PARITY-GAPS.md` when upstream shipped **new
+  functionality** `src/standalone/` doesn't implement — and only *features*, never bug fixes,
+  refactors, dep bumps, tests, infra, or VS Code-only surfaces.
+- **Renumbering, merging, or deleting buckets** → the bucket list is an **append-only ledger**.
+  Each new feature gets the next free letter (one bucket per feature); an implemented one is
+  marked `SHIPPED (<date>)` **in place** by the implementing agent. Never reorganize the ledger.
 - **Pushing or merging onto `main` from the skill** → never. Stop at the local branch.
 
 For the invariant, the override seam, and the parity algorithm in full, read `reference.md`.

@@ -8,21 +8,25 @@ pure infra (devcontainer, CI, dep bumps, security CSP/XSS branches) are
 excluded.
 
 **Derived & re-verified** `3a41450` (merge-base **==** upstream/main), **0 behind**;
-**gap = 10** (universe 75 \ exposed 65, `parity-gap.mjs`, 2026-05-30, post-merge). If
-`git rev-parse upstream/main` ≠ `3a41450`, regenerate. (The 2026-05-27 derivation was
-against the older upstream head `abc0a6c`; the merge-base advanced to `1fef41a`, then to
-`3a41450` once PR #12 merged `upstream/main`.) Every claim below was re-checked against
-the actual code.
+**gap = 10** (universe 75 \ exposed 65, `parity-gap.mjs`, 2026-05-30). If
+`git rev-parse upstream/main` ≠ `3a41450`, regenerate. Every claim below was re-checked
+against the actual code.
 
-**Foundational correction (2026-05-30, updated post-merge).** Earlier revisions claimed
-the fork was *"additive-only — `git diff upstream/main` is empty across `src/` outside
-`src/standalone/`."* That briefly stopped being true when upstream moved ahead of the
-fork's base — but the fork has now **merged the delta** (PR #12, `f50fa13`), so the
-merge-base equals `upstream/main` again and **Bucket F merge debt is paid**. The only
-remaining drift outside `src/standalone/` is **2 fork-*ahead* deliberate edits**
-(`metric-engine.ts` locale pin, `parser-codex.test.ts` timeout — commit `44e9532`),
-which the drift gate classifies `DELIBERATE` → upstream-it. They are not merge debt. The
-fork is once again *additive on top of current upstream*, plus those 2 known fork-ahead fixes.
+**Scope (what this report is — and isn't).** This tracks **functional parity only**:
+upstream functionality not exposed/implemented by the standalone build. Git *sync status*
+— how far behind `upstream/main` the fork is — is **not** a parity gap and is **not** tracked
+here; the merge workflow's `fetch-upstream.sh` (behind count) and `drift-gate.sh` own that.
+The fork is additive on top of upstream, plus **2 known fork-*ahead* edits** (`metric-engine.ts`
+locale pin, `parser-codex.test.ts` timeout — commit `44e9532`), tracked under *Fork-authored
+drift* below as upstream-it candidates, not gaps.
+
+**Bucket convention (append-only ledger).** Buckets (A, B, C, …) are append-only: each is a
+unit of upstream functionality. When a merge surfaces genuinely new upstream functionality the
+standalone build doesn't implement, it is **appended** as a new lettered bucket — never folded
+into an existing bucket, never renumbered, never deleted. An implemented bucket is marked
+`SHIPPED`/implemented **in place** by the implementing agent and kept as history. (Bug fixes,
+refactors, dep bumps, tests, infra, and VS Code-only surfaces are not functionality gaps and
+get no bucket.)
 
 How the standalone build is assembled: the fork exposes upstream's RPC surface
 through a frozen allowlist (`src/standalone/v1-allowed.ts`) — 52 read/registry
@@ -34,11 +38,9 @@ usually upstream's own doing: the burndown link is gated by
 `FF_TOKEN_REPORTING_ENABLED`, and several routes (Data Explorer, Rule
 Playground, Rule Editor, SDLC) are deep-link-only with no nav link upstream.
 
-**Status (2026-05-30):** buckets A, B, and D are SHIPPED; **bucket F (merge debt) is
-RESOLVED** — the fork merged `upstream/main` (PR #12), so #53 and #67 are now in the
-tree. Gaps remain across bucket C (project-scoped analysis) and bucket E (agentic SDLC).
-Several "shipped" pages also carry residual per-method degradations now tracked inline
-(see **Per-method degradations**).
+**Status (2026-05-30):** buckets A, B, and D are SHIPPED. Gaps remain across bucket C
+(project-scoped analysis) and bucket E (agentic SDLC). Several "shipped" pages also carry
+residual per-method degradations now tracked inline (see **Per-method degradations**).
 
 ## A. Quick wins — SHIPPED (2026-05-27)
 
@@ -154,54 +156,13 @@ output ceiling, and request timeout.
 - **SDLC GitHub data** — `getSdlcGitHubData`. Needs GitHub auth / network.
   **Hard** — distinct from the local scans.
 
-## F. Merge debt — RESOLVED 2026-05-30 (was: fork is behind upstream)
+## Fork-authored drift outside `src/standalone/` (NOT a parity gap)
 
-**Status: paid.** The fork has since merged `upstream/main` up to `3a41450`
-(PR #12 — `f50fa13`, branch `sync/upstream-20260530`, merging `959ec59`).
-`git merge-base HEAD upstream/main` now **equals** `upstream/main` (`3a41450`);
-`fetch-upstream.sh` and `parity-gap.mjs` both report **0 behind**. The two portable
-items below were flagged while the fork was still branched at the older `abc0a6c`
-base; both are now in the tree (verified against the code 2026-05-30). Kept for history.
-
-- **#53 — blank dashboard for non-VS-Code harnesses** ✅ **RESOLVED.** Upstream's
-  `hasExternalHarnessSources()` (`src/core/parser-harnesses.ts:86`) and the load gate
-  are now present: `panel.ts:12` imports it, `panel.ts:207` calls it, and the abort
-  at `panel.ts:213` fires only when `dirs.length === 0 && !hasExternal`. The old
-  unconditional `"No Copilot chat log directories found."` abort is gone — replaced by
-  `"No AI coding session logs found. Looked for VS Code, GitHub Copilot…, Claude Code,
-  Codex, and OpenCode sessions."` A standalone box with **only** Claude Code / Codex /
-  OpenCode logs (`~/.claude/projects`, etc.) and no VS Code workspace storage now loads
-  the dashboard.
-- **#67 — Codex `skillsUsed` undercount** ✅ **RESOLVED.** Codex skill extraction is
-  merged: `collectSkillsFromArgs` (`parser-codex.ts:242`) and `extractSkillPathsFromText`
-  (`parser-shared.ts:320`). Standalone Dashboard / Tool-Mastery metrics no longer
-  undercount skill invocations for Codex sessions.
-- **~~Locale-pinned rule serialization~~ — CORRECTED 2026-05-30: fork-*ahead* drift, not debt.**
-  The prior revision claimed upstream pinned `toLocaleString('en-US')` in `metric-engine.ts`
-  and the fork lacked it. The reverse is true: the **fork** pinned it (commit `44e9532`,
-  2026-05-28) and **upstream HEAD is still unpinned** —
-  `git diff 1fef41a upstream/main -- src/core/metric-engine.ts` is empty. It is a
-  fork-authored correctness fix to **upstream**, tracked below under *Fork-authored drift*.
-  A merge will NOT touch this hunk (upstream never changed the file). The drift gate
-  (2026-05-30) flags it as `DELIBERATE` → upstream-it.
-- **VS Code-only delta (excluded, listed for completeness):** `src/chat/*`
-  (`@aicoach` chat participant) and `src/mcp/*` (13 Language Model tools) — the
-  fork is missing these too, but they require the VS Code chat sidebar / MCP host
-  and have no standalone equivalent. Not a standalone-UI gap.
-
-> **Merge-cleanliness note (post-merge):** the merge landed clean. The one expected
-> conflict — `parser-codex.test.ts` (upstream +86 lines, #67) — was resolved keeping the
-> fork's timeout *and* upstream's new tests. `metric-engine.ts` did not conflict (upstream
-> never touched it since the merge-base). The standalone constants `onResolve` override and
-> the `standalone-html.ts` nav-boundary assertions still hold (drift gate + build self-guard
-> green, 2026-05-30).
-
-### Fork-authored drift outside `src/standalone/` (upstream-it candidates — fork is *ahead*)
-
-Two deliberate edits live in shared `src/` (drift gate, 2026-05-30). **Neither is merge
-debt** — both are portable fixes the fork should PR to `microsoft/AI-Engineering-Coach`
-rather than carry indefinitely. The drift gate classifies both as `DELIBERATE` and proposes
-upstream-it; **never auto-revert** them — each keeps an upstream test green locally.
+Deliberate fork-*ahead* edits that live in shared `src/` (drift gate, 2026-05-30). **These
+are not standalone parity gaps and not merge debt** — they are portable fixes the fork should
+PR to `microsoft/AI-Engineering-Coach` rather than carry indefinitely. The drift gate
+classifies both as `DELIBERATE` and proposes upstream-it; **never auto-revert** them — each
+keeps an upstream test green locally.
 
 - `src/core/metric-engine.ts` — `toLocaleString('en-US')` locale pin (commit `44e9532`).
   Without it `metric-engine.test.ts:435` goes red on non-en-US locales (this machine's Node
@@ -231,11 +192,7 @@ against the allowlist files, 2026-05-30:
 
 ## Priority notes
 
-- **~~Highest leverage: merge `upstream/main` (bucket F)~~ — DONE 2026-05-30.** PR #12
-  (`f50fa13`) merged the delta: #53 (blank-dashboard gap) and #67 are fixed, and the
-  "additive on top of current upstream" invariant is restored. (Locale pinning was **not**
-  part of this — the fork has it and upstream does not; upstream-it instead.)
-- **Biggest visible broken surface now: the SDLC tab (bucket E)** — allowlist
+- **Biggest visible broken surface: the SDLC tab (bucket E)** — allowlist
   `getSdlcRepoScan` + `getSdlcToolAnalysis` through the request-service bridge.
 - **Cheap finishers:** `saveModelBudgets`/`loadModelBudgets` (Burndown),
   `getWorkspaceDeps` (Learning), `reviewLocalRules` (Anti-Patterns) — small write/

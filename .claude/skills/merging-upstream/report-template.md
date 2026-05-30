@@ -2,8 +2,13 @@
 
 The format for `docs-fork/STANDALONE-PARITY-GAPS.md`. Sections marked **[AUTO]** come
 verbatim from `scripts/parity-gap.mjs`; sections marked **[HUMAN]** are judgment the script
-must not invent. **Preserve the existing bucket A–F structure** when regenerating — do not
-renumber or drop buckets a human curated; only refresh the auto facts and append new gaps.
+must not invent. **The bucket list (A, B, C, …) is an append-only ledger** — never renumber,
+never delete a bucket a human curated. Refresh the auto facts in place. When a merge surfaces
+genuinely new upstream functionality the standalone build doesn't implement, **append a new
+lettered bucket** at the next free letter (see *Appending new buckets* below). An implemented
+bucket is **marked implemented in place** (status flips to `SHIPPED (<date>)`), not removed —
+it stays as history. This report tracks **functional parity only**; git *sync status* (how
+far behind upstream the fork is) is **not** a parity gap and never gets a bucket.
 
 ---
 
@@ -53,12 +58,30 @@ difficulty (`Easy`/`Med`/`Hard`), status (`SHIPPED`/`TODO`).
 
 [HUMAN] `getSdlc*` / dropped-data-service gaps.
 
-## F. Merge debt — fork is behind upstream — [HUMAN]
+## Appending new buckets — when a merge surfaces new functionality — [HUMAN, features only]
 
-[HUMAN] **Invisible to the allowlist diff.** Derive from
-`git diff --stat <merge-base> HEAD -- src/ ':(exclude)src/standalone/'` and the
-`HEAD..upstream/main` log. Portable upstream changes the fork hasn't merged yet that affect
-standalone data/load behavior go here. This is usually the highest-leverage section.
+[HUMAN] **Not a "merge debt" / "fork is behind" step.** When `upstream/main` is ahead, scan
+the delta — `git diff <merge-base> upstream/main -- src/ ':(exclude)src/standalone/'` plus the
+`<merge-base>..upstream/main` log — for genuinely **new user-facing functionality** the
+standalone build doesn't implement. This catches **non-RPC** features the allowlist diff
+can't see (e.g. a new dashboard load-gate). Then, per change:
+
+- **New portable feature, not in `src/standalone/`** → **append a new lettered bucket** at the
+  next free letter (one bucket per feature / feature area). The ledger is append-only: never
+  fold a new feature into an existing bucket's scope, never renumber, never delete. Leave the
+  bucket status `GAP`/`TODO` and difficulty / Effect / Priority `TODO` for a human.
+- **Bug fix / refactor / dep bump / test / infra / VS Code-only** → **NOT a parity gap.** Do
+  not append a bucket. Being N commits behind upstream is a *sync status*, surfaced by the
+  merge workflow's `fetch-upstream.sh` (behind count) and `drift-gate.sh` — never a row here.
+
+**Marking a bucket implemented.** When the standalone build later exposes a bucket's
+functionality, the **implementing agent** flips that bucket's status to `SHIPPED (<date>)`
+**in place** and records the allowlist/bridge wiring — the bucket stays in the ledger. Shape:
+
+```
+## F. Repo Health score + page — SHIPPED (2026-06-12)
+- `getRepoHealthScore` added to V1_ALLOWED; "Repo Health" nav link injected in standalone-html.ts.
+```
 
 ---
 
@@ -82,6 +105,13 @@ Paste the degradations table — methods **called** by a shipped `src/webview/pa
 methodName: CALLED by a shipped page but NOT exposed -> silent degradation
     src/webview/page-*.ts:NN:  ...call site...
 ```
+
+## [HUMAN] Fork-authored drift outside `src/standalone/` (NOT a parity gap)
+
+Optional. Deliberate fork-*ahead* edits in shared `src/` (from `drift-gate.sh`'s
+`DELIBERATE` classification) — portable fixes the fork carries and should upstream. Listed
+as upstream-it candidates for context; they are fork-ahead, not standalone gaps, and **never
+merge debt**. **Never auto-revert.**
 
 ## [HUMAN] Priority notes
 
