@@ -7,9 +7,11 @@ surfaces (activity-bar sidebar, the `@aicoach` chat participant, MCP tools) and
 pure infra (devcontainer, CI, dep bumps, security CSP/XSS branches) are
 excluded.
 
-**Derived:** 2026-05-27 against upstream `abc0a6c`. **Re-verified:** 2026-05-30
-against upstream HEAD `3a41450` (upstream advanced 29 commits in the interim).
-Every claim below was re-checked against the actual code in both git trees.
+**Derived** `1fef41a` (merge-base) → **re-verified** `3a41450` (upstream/main),
+**67 behind** (`parity-gap.mjs`, 2026-05-30). If `git rev-parse upstream/main` ≠
+`3a41450`, regenerate. (The original 2026-05-27 derivation was against the older
+upstream head `abc0a6c`; the merge-base has since advanced to `1fef41a`.) Every
+claim below was re-checked against the actual code in both git trees.
 
 **Foundational correction (2026-05-30).** Earlier revisions of this doc claimed
 the fork was *"additive-only — it ships all upstream source untouched (`git diff
@@ -172,19 +174,42 @@ features the fork never merged, and the fastest fix for the first two is a plain
   `parser-codex.ts` / `parser-shared.ts`); the fork lacks them, so the standalone
   Dashboard / Tool-Mastery metrics undercount skill invocations for Codex sessions.
   **Fix:** merge.
-- **Locale-pinned rule serialization** 🟠 Med. Upstream pinned `toLocaleString('en-US')`
-  in `metric-engine.ts` when serializing calibration results into rule comments;
-  the fork's unpinned version can break rule round-tripping on non-US-locale hosts
-  (affects Rule Editor / Playground correctness). **Fix:** merge.
+- **~~Locale-pinned rule serialization~~ — CORRECTED 2026-05-30: fork-*ahead* drift, not debt.**
+  The prior revision claimed upstream pinned `toLocaleString('en-US')` in `metric-engine.ts`
+  and the fork lacked it. The reverse is true: the **fork** pinned it (commit `44e9532`,
+  2026-05-28) and **upstream HEAD is still unpinned** —
+  `git diff 1fef41a upstream/main -- src/core/metric-engine.ts` is empty. It is a
+  fork-authored correctness fix to **upstream**, tracked below under *Fork-authored drift*.
+  A merge will NOT touch this hunk (upstream never changed the file). The drift gate
+  (2026-05-30) flags it as `DELIBERATE` → upstream-it.
 - **VS Code-only delta (excluded, listed for completeness):** `src/chat/*`
   (`@aicoach` chat participant) and `src/mcp/*` (13 Language Model tools) — the
   fork is missing these too, but they require the VS Code chat sidebar / MCP host
   and have no standalone equivalent. Not a standalone-UI gap.
 
-> **Merge-cleanliness caveat:** the fork's `src/standalone/` work is orthogonal
-> to this delta, but a merge will still touch `panel.ts`, `parser-*.ts`, and
-> `metric-engine.ts`. Verify the standalone constants `onResolve` override and the
-> `standalone-html.ts` nav-boundary assertions still hold after merging.
+> **Merge-cleanliness caveat:** the fork's `src/standalone/` work is orthogonal to this
+> delta. Expected conflicts are confined to two fork-authored files (see *Fork-authored
+> drift* below): `parser-codex.test.ts` (upstream +86 lines, #67) and
+> `panel-request-service.ts` (upstream 1 line) — resolve both toward keeping the fork's
+> fix *and* upstream's additions. `metric-engine.ts` will NOT conflict (upstream never
+> touched it since the merge-base). After merging, verify the standalone constants
+> `onResolve` override and the `standalone-html.ts` nav-boundary assertions still hold.
+
+### Fork-authored drift outside `src/standalone/` (upstream-it candidates — fork is *ahead*)
+
+Three deliberate edits live in shared `src/` (drift gate, 2026-05-30). **None are merge
+debt** — each is a portable correctness fix the fork should PR to
+`microsoft/AI-Engineering-Coach` rather than carry indefinitely. The drift gate classifies
+all three as `DELIBERATE` and proposes upstream-it; **never auto-revert** them.
+
+- `src/core/metric-engine.ts` — `toLocaleString('en-US')` locale pin (commit `44e9532`).
+  No upstream overlap → merges clean.
+- `src/core/parser-codex.test.ts` — 120s timeout on the `>MAX_FILE_SIZE` Codex test (slow
+  on Windows), commit `44e9532`. **Conflict risk:** upstream added +86 lines to this same
+  test file (#67) — keep the fork's timeout *and* upstream's new tests.
+- `src/webview/panel-request-service.ts` — Windows `path.join` separator fix (commit
+  `e3be742`). **Conflict risk:** upstream changed 1 line here — resolve toward keeping the
+  `path.join` fix; reverting it re-breaks `service-writes.test.ts` on Windows.
 
 ## Per-method degradations (within otherwise-shipped pages)
 
@@ -202,8 +227,9 @@ against the allowlist files, 2026-05-30:
 ## Priority notes
 
 - **Highest leverage now: merge `upstream/main` (bucket F).** Fixes #53 (the
-  blank-dashboard gap), #67, and locale pinning in one step — and restores the
-  "additive on top of current upstream" invariant this doc originally assumed.
+  blank-dashboard gap) and #67 in one step — and restores the "additive on top of
+  current upstream" invariant this doc originally assumed. (Locale pinning is **not**
+  fixed by the merge — the fork already has it and upstream does not; upstream-it instead.)
 - **Biggest visible broken surface: the SDLC tab (bucket E)** — allowlist
   `getSdlcRepoScan` + `getSdlcToolAnalysis` through the request-service bridge.
 - **Cheap finishers:** `saveModelBudgets`/`loadModelBudgets` (Burndown),
