@@ -71,7 +71,9 @@ Run everything from the repo root.
    `bash .claude/skills/merging-upstream/scripts/guarded-merge.sh execute`. It creates a
    fresh `sync/upstream-<date>` branch, merges `--no-commit`, surfaces conflicts (never
    auto-resolves), runs `npm run build:standalone` (the FF-redirect self-guard), and
-   commits only if the gate passes. It **ABORTs loud** on any failure and **never pushes**.
+   commits only if the gate passes. It **keeps the fork's `README.md`** — upstream's README
+   is always discarded, never synced (the `KEEP_FROM_FORK` pin in `guarded-merge.sh`). It
+   **ABORTs loud** on any failure and **never pushes**.
 
 7. **VERIFY** — Re-run `drift-gate.sh`; confirm `VERDICT: INVARIANT OK`. Report the branch
    name. **Do not push** — a human runs `git push -u origin sync/...` and opens the PR.
@@ -84,6 +86,8 @@ Run everything from the repo root.
   for **that one path** only. Never blanket-apply.
 - Conflict in **any other core file** → resolve toward upstream, then re-run `drift-gate.sh`
   to confirm the file ends byte-identical.
+- Conflict in **`README.md`** → never surfaced: `guarded-merge.sh` auto-resolves it to the
+  fork's version (a `KEEP_FROM_FORK` pin), so the fork README is never synced from upstream.
 
 `rerere` is enabled by `fetch-upstream.sh`, so the same conflict resolves automatically on
 the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
@@ -93,6 +97,8 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 - **Never pushes** — the workflow stops at a local branch; a human publishes.
 - **Never merges onto `main`** — always a `sync/upstream-<date>` branch.
 - **Never auto-reverts** the fork's deliberate edits (`44e9532`) — it proposes upstreaming them.
+- **Never syncs `README.md`** — the fork's README is always kept and upstream's discarded (the
+  `KEEP_FROM_FORK` pin). README is outside the `src/` drift gate, so this never affects the invariant.
 - **Surfaces conflicts** rather than auto-favoring a side (except a generated/lock file).
 - **Build-as-gate** — `npm run build:standalone` catches a `constants.ts` rename that a
   pure git-diff would miss (esbuild throws `0 redirects` on `onEnd`).
