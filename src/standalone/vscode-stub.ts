@@ -36,6 +36,13 @@ export const workspace = {
   // exportSummaryFiles:33 reads `?.[0]?.uri` → defaultUri = undefined. Both short-circuit cleanly.
   workspaceFolders: undefined as readonly unknown[] | undefined,
   fs: {
+    // Mirrors VS Code's workspace.fs.createDirectory: create the directory and all
+    // missing parents. Upstream's path-hardening (af35d49) calls this explicitly
+    // before writeFile (installSkill/installCatalogItem); without it the stub throws
+    // "createDirectory is not a function".
+    async createDirectory(uri: { fsPath: string }): Promise<void> {
+      await fs.promises.mkdir(uri.fsPath, { recursive: true });
+    },
     // Replicates VS Code's auto-parent-create: installCatalogItem writes nested
     // ~/.agents/<sub>/<slug>/, installSkill writes ~/.agents/skills/. `data` arrives as a
     // Buffer/Uint8Array (Buffer.from(...)), which fs.writeFile accepts directly.

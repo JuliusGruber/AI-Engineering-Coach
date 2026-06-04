@@ -153,6 +153,22 @@ describe('write seam — workspace', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('workspace.fs.createDirectory creates the dir and all missing parents (mkdir-p), and is idempotent on an existing dir', async () => {
+    // installSkill/installCatalogItem call createDirectory(dirname(target)) before writeFile
+    // (panel-request-service.ts:626/665, upstream af35d49). Missing parents must be created,
+    // and a re-install into an existing dir must NOT throw (recursive: true).
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'coach-stub-'));
+    try {
+      const target = path.join(tmp, 'nested', 'deep', 'dir');
+      await vscode.workspace.fs.createDirectory(vscode.Uri.file(target));
+      expect(fs.statSync(target).isDirectory()).toBe(true);
+      // Second call on the now-existing dir resolves instead of throwing EEXIST.
+      await expect(vscode.workspace.fs.createDirectory(vscode.Uri.file(target))).resolves.toBeUndefined();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('write seam — window + env', () => {
