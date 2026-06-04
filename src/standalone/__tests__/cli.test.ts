@@ -11,15 +11,18 @@ vi.mock('../parse-bootstrap', () => ({
   bootstrapParse: vi.fn(),
 }));
 vi.mock('open', () => ({ default: vi.fn() }));
+vi.mock('../env-file', () => ({ loadEnvFile: vi.fn(() => []) }));
 
 import { runCli, attachLogFile } from '../cli';
 import { createServer, probeExistingInstance, type ServerHandle } from '../server';
 import { bootstrapParse } from '../parse-bootstrap';
+import { loadEnvFile } from '../env-file';
 import open from 'open';
 
 const mockedCreateServer = vi.mocked(createServer);
 const mockedProbe = vi.mocked(probeExistingInstance);
 const mockedBootstrap = vi.mocked(bootstrapParse);
+const mockedLoadEnvFile = vi.mocked(loadEnvFile);
 const mockedOpen = vi.mocked(open);
 
 const TOKEN = 'a'.repeat(64);
@@ -174,6 +177,51 @@ describe('runCli — boot', () => {
     mockedCreateServer.mockRejectedValue(new Error('no free port in 7331..7340'));
 
     await expect(runCli(['node', 'coach', '--no-open'])).rejects.toThrow('no free port');
+  });
+});
+
+describe('runCli — .env loading', () => {
+  it('loads .env from the working directory before starting the server', async () => {
+    mockedProbe.mockResolvedValue(null);
+    const handle = fakeHandle();
+    mockedCreateServer.mockResolvedValue(handle);
+    mockedBootstrap.mockResolvedValue({ analyzer: {} as never, parseResult: {} as never });
+    const onSpy = vi.spyOn(process, 'on');
+
+    const p = runCli(['node', 'coach', '--no-open']);
+    await vi.waitFor(() => expect(handle.setData).toHaveBeenCalledOnce());
+
+    expect(mockedLoadEnvFile).toHaveBeenCalledWith(path.join(process.cwd(), '.env'));
+    // Loaded before serving, so the key is in process.env before any LLM detection.
+    expect(mockedLoadEnvFile.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedCreateServer.mock.invocationCallOrder[0],
+    );
+
+    triggerSignal(onSpy, 'SIGINT');
+    await p;
+  });
+
+  it('reports the variable names it loaded to stderr (names only, never values)', async () => {
+    mockedProbe.mockResolvedValue(null);
+    const handle = fakeHandle();
+    mockedCreateServer.mockResolvedValue(handle);
+    mockedBootstrap.mockResolvedValue({ analyzer: {} as never, parseResult: {} as never });
+    mockedLoadEnvFile.mockReturnValueOnce(['ANTHROPIC_API_KEY']);
+    const onSpy = vi.spyOn(process, 'on');
+
+    const p = runCli(['node', 'coach', '--no-open']);
+    await vi.waitFor(() => expect(handle.setData).toHaveBeenCalledOnce());
+
+    expect(errCap.text()).toContain('.env');
+    expect(errCap.text()).toContain('ANTHROPIC_API_KEY');
+
+    triggerSignal(onSpy, 'SIGINT');
+    await p;
+  });
+
+  it('does not load .env on the --version early exit', async () => {
+    await runCli(['node', 'coach', '--version']);
+    expect(mockedLoadEnvFile).not.toHaveBeenCalled();
   });
 });
 

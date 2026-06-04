@@ -4,6 +4,7 @@
 import { parseFlags, FlagError, type ParsedFlags } from './flags';
 import { createServer, probeExistingInstance, type ServerHandle } from './server';
 import { bootstrapParse } from './parse-bootstrap';
+import { loadEnvFile } from './env-file';
 import open from 'open';
 import { randomBytes } from 'crypto';
 import * as fs from 'fs';
@@ -82,6 +83,12 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   if (flags.logFile) attachLogFile(flags.logFile);
+
+  // Load .env from the working directory before anything reads process.env, so an
+  // ANTHROPIC_API_KEY/OPENAI_API_KEY there reaches detectProvider. Real env vars win
+  // (loadEnvFile never overrides). Names are echoed (values never) as a boot breadcrumb.
+  const loadedEnv = loadEnvFile(path.join(process.cwd(), '.env'));
+  if (loadedEnv.length) process.stderr.write(`coach: loaded ${loadedEnv.join(', ')} from .env\n`);
 
   const existing = await probeExistingInstance(flags.port);
   if (existing) {

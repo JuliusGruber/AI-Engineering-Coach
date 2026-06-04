@@ -17,3 +17,4 @@ local/
 test_output.txt
 scripts/verify-counts.ts
 marketing/
+/.env
