@@ -105,7 +105,7 @@ state moves). `land` refuses to advance `main` while any drift remains.
   at HEAD. The service-bridge adds **no** keys (it is gated by `V1_SERVICE_ALLOWED`).
 - **Comment-strip before extracting literals** — `v1-allowed.ts` contains
   `require('vscode')` and method names *in comments*; without stripping, `vscode` leaks into
-  the count and inflates it. The recorded baseline (`52 / 12 / 1 / 65`) is the regression
+  the count and inflates it. The recorded baseline (`52 / 15 / 1 / 68`) is the regression
   assertion that proves the parser counted the Set *literally*, not the header comment.
 - **Two pitfalls the naive diff must correct:**
   - *Over-reports forward-only entries* — e.g. `importRegistryRules` is allowlisted but has
@@ -115,16 +115,15 @@ state moves). `land` refuses to advance `main` while any drift remains.
   - *Under-reports called-but-unallowlisted degradations* — `saveModelBudgets` /
     `getWorkspaceDeps` are *called* by shipped pages yet not allowlisted, so they degrade
     silently. → the call-site cross-reference (the degradations table) catches these.
-- **What stays human:** feature-bucket assignment, difficulty/severity, portability
-  (shimmable vs vscode-only), the scope-exclusion list, and all Effect/Priority prose. New
-  **non-RPC** upstream functionality is invisible to the allowlist diff — catch it with a
-  **features-only** scan of `git diff <base> upstream/main` (exclude bug fixes, refactors,
-  dep bumps, tests, infra, VS Code-only surfaces) and **append it as a new lettered bucket**.
-  The bucket list is an **append-only ledger**: never renumber or delete a bucket; one bucket
-  per feature; an implemented bucket is marked `SHIPPED (<date>)` **in place** by the
-  implementing agent. **Never a "merge debt" bucket** — how far behind upstream the fork is,
-  is a *sync status* (`fetch-upstream.sh` / `drift-gate.sh`), not a parity gap. The script
-  **proposes** from auto-signals; a human finalizes.
+- **What stays human:** the feature inventory itself — enumerating every user-facing upstream
+  feature and assigning each a **✅/⚠️/❌/⛔** status grounded in code read in both repos, plus
+  the portability calls and Note prose. New **non-RPC** upstream functionality is invisible to
+  the allowlist diff — catch it by re-reading the upstream surface (nav, `page-*.ts`,
+  `contributes.*`, `src/chat/*`, `src/mcp/*`) on every rebuild, not just the RPC delta. The
+  inventory is **rebuilt every sync** (regenerated, not patched). How far behind upstream the
+  fork is, is a *sync status* (`fetch-upstream.sh` / `drift-gate.sh`), **not** a feature row.
+  This script **proposes** auto-signals (counts, new methods, degradations); a human grounds
+  every row.
 - **Staleness:** the script banners `derived <base> → re-verified <upstream_head>, <n> behind`.
   If `git rev-parse upstream/main` ≠ the doc's derived SHA, regenerate.
 
