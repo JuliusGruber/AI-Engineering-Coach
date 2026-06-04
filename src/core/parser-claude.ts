@@ -675,6 +675,7 @@ function parseClaudeSessionFile(filePath: string, wsId: string, wsName: string):
     lastMessageDate: lastTs,
     requests,
     hasDevcontainer: detectDevcontainerFromRequests(requests, cwd),
+    workspaceRootPath: cwd || undefined,
     launcherKind,
     entrypoint,
   });

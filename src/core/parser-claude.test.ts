@@ -483,4 +483,19 @@ describe('parseClaudeSessions', () => {
       expect(session.requests[0].skillsUsed).toHaveLength(1);
     });
   });
+
+  it('stores the Claude session cwd as workspaceRootPath', () => {
+    // The cwd recorded on user records is the project root. Surfacing it as
+    // workspaceRootPath lets config-health / SDLC workspace scans resolve the
+    // repo for Claude sessions, the same way the Codex parser already does.
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-cwd-test-'));
+    withProjectsDir('s.jsonl', [
+      makeUser('hello', '2025-06-15T10:00:00Z', { cwd }),
+      makeAssistant('hi there'),
+    ], (projectsDir) => {
+      const session = parseClaudeSessions(projectsDir)[0].sessions[0];
+      expect(session.workspaceRootPath).toBe(cwd);
+    });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
 });

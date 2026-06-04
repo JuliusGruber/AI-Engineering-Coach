@@ -300,6 +300,7 @@ function parseOpenCodeSession(rawSession: OcSession, storageDir: string): Sessio
     lastMessageDate: lastTs || (rawSession.time?.updated || null),
     requests,
     hasDevcontainer: detectDevcontainerFromRequests(requests, rawSession.directory),
+    workspaceRootPath: rawSession.directory || undefined,
   });
 }
 
