@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown (docs + skill files), one Node ESM script (`parity-gap.mjs`), `git grep` / `node` for verification. Repo is a Windows checkout; `node` runs cross-platform via PowerShell, and the `merging-upstream` `.sh` scripts run via the Bash tool / git-bash. Auto-memory files live **outside** the repo at `C:\Users\juliu\.claude\projects\C--Users-juliu-IdeaProjects-AI-Engineering-Coach\memory\` and are **not** committed to git.
 
-**Source design:** `docs/superpowers/specs/2026-06-04-standalone-feature-parity-redesign-design.md` (Status: Approved design). Read it before starting — this plan implements its sections 5–10 against acceptance criteria 1–6.
+**Source design:** `docs-fork/superpowers/spec/2026-06-04-standalone-feature-parity-redesign-design.md` (Status: Approved design). Read it before starting — this plan implements its sections 5–10 against acceptance criteria 1–6.
 
 ---
 
@@ -670,7 +670,7 @@ whose counts paste into the doc's appendix — it no longer defines the doc's st
 **Why:** the old append-only **bucket ledger (A–E)** was RPC-centric and hard to read at a
 glance — it couldn't see non-RPC user-facing features and required decoding method names. The
 2026-06-04 redesign
-(`docs/superpowers/specs/2026-06-04-standalone-feature-parity-redesign-design.md`) replaced it
+(`docs-fork/superpowers/spec/2026-06-04-standalone-feature-parity-redesign-design.md`) replaced it
 with the feature inventory. Buckets, the append-only ledger, and difficulty/Effect/Priority
 columns are **gone**. Git *sync status* (how far behind upstream) is still NOT a row — it's
 owned by `fetch-upstream.sh` / `drift-gate.sh`.
