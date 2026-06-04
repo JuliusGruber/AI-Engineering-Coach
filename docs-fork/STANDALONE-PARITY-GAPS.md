@@ -7,10 +7,18 @@ surfaces (activity-bar sidebar, the `@aicoach` chat participant, MCP tools) and
 pure infra (devcontainer, CI, dep bumps, security CSP/XSS branches) are
 excluded.
 
-**Derived & re-verified** `3a41450` (merge-base **==** upstream/main), **0 behind**;
-**gap = 10** (universe 75 \ exposed 65, `parity-gap.mjs`, 2026-05-30). If
-`git rev-parse upstream/main` ≠ `3a41450`, regenerate. Every claim below was re-checked
-against the actual code.
+**Derived & re-verified** `89c7688` (merge-base **==** upstream/main), **0 behind**
+(synced from `3a41450`, +19 commits, 2026-06-04); **gap = 7** (universe 75 \ exposed 68,
+`parity-gap.mjs`, 2026-06-04). If `git rev-parse upstream/main` ≠ `89c7688`, regenerate.
+Every claim below was re-checked against the actual code.
+
+> **Counts (regression assertions).** `V1_ALLOWED = 52` · `V1_SERVICE_ALLOWED = 15`
+> (DRIFT vs the script's baseline 12) · `STANDALONE_NATIVE = 1` · `exposed (union) = 68`
+> (DRIFT vs baseline 65) · `universe = 75` · `gap = 7`. Both DRIFT flags are **expected fork
+> progress** (bucket E shipped +3 service methods), not a parser/allowlist regression — bump
+> the regression baselines in `parity-gap.mjs` to 15 / 68 to clear them. The upstream RPC
+> surface is **unchanged** since the merge-base: no newly-appeared methods need an allowlist
+> decision.
 
 **Scope (what this report is — and isn't).** This tracks **functional parity only**:
 upstream functionality not exposed/implemented by the standalone build. Git *sync status*
@@ -40,11 +48,18 @@ usually upstream's own doing: the burndown link is gated by
 `FF_TOKEN_REPORTING_ENABLED`, and several routes (Data Explorer, Rule
 Playground, Rule Editor, SDLC) are deep-link-only with no nav link upstream.
 
-**Status (2026-05-30):** buckets A, B, D, and E (local scans) are SHIPPED. Gaps remain
-across bucket C (project-scoped analysis); within bucket E only `getSdlcGitHubData`
-(GitHub auth/network) stays deferred, plus a per-harness coverage Follow-up for
-repo-scan / deps on Claude / OpenCode. Several "shipped" pages also carry residual
-per-method degradations now tracked inline (see **Per-method degradations**).
+**Status (synced to upstream `89c7688`, 2026-06-04):** buckets A, B, D, and E (local scans)
+are SHIPPED. Gaps remain across bucket C (project-scoped analysis); within bucket E only
+`getSdlcGitHubData` (GitHub auth/network) stays deferred. **The bucket-E per-harness Follow-up
+is now RESOLVED by this sync:** upstream `cb61436` (#86) sets `workspaceRootPath` for the Claude
+and OpenCode parsers (`parser-claude.ts:678` `cwd`, `parser-opencode.ts:303` `rawSession.directory`)
+— exactly the upstreamed fix the report predicted — so repo-scan + deps + quiz personalization
+now resolve for **all three** harnesses (subject to the session recording a valid directory),
+no longer Codex-only. Several "shipped" pages still carry residual per-method degradations
+tracked inline (see **Per-method degradations**). The 2026-06-04 sync (19 commits) was scanned
+for new functionality per the append-only ledger rule: it is **entirely** bug fixes, webview/ReDoS
+security hardening, dep bumps, docs, tests, and VS Code-only surfaces (WSL / Remote-SSH /
+devcontainer `workspaceStorage` discovery) — **no new feature bucket** to append.
 
 ## A. Quick wins — SHIPPED (2026-05-27)
 
@@ -125,10 +140,12 @@ single seam (the `vscode` stub).
 - **Learning Center** ✅ — `generateLearningQuiz` / `generateCodeComparison` /
   `generateDidYouKnow` / `generateLearningResources`, exposed via the
   `PanelRequestService` bridge (`src/standalone/request-service-bridge.ts`, gated by
-  `V1_SERVICE_ALLOWED`). **Caveat:** the Learning page also calls `getWorkspaceDeps`
-  (bucket E, now allowlisted) — quiz personalization uses real deps for Codex / VS
-  Code `workspaceStorage`, and falls back to generic content only for Claude /
-  OpenCode (unresolved workspace root; see Per-method degradations + bucket-E Follow-up).
+  `V1_SERVICE_ALLOWED`). **Caveat (narrowed by the 2026-06-04 sync):** the Learning page also
+  calls `getWorkspaceDeps` (bucket E, now allowlisted) — quiz personalization now uses real deps
+  for **all** harnesses (the Claude / OpenCode parsers set `workspaceRootPath` as of upstream
+  `cb61436` / #86, on par with Codex + VS Code `workspaceStorage`); it falls back to generic
+  content only when the session recorded no resolvable directory (see Per-method degradations
+  + bucket-E Follow-up).
 - **Skill discovery / triage / generation** ✅ — `discoverCatalog` / `triageCatalog` /
   `triageSkills` / `generateSkillContent` via the same bridge. `createSkill` stays degraded
   (it opens VS Code chat — not an LLM call).
@@ -156,26 +173,27 @@ output ceiling, and request timeout.
   exposed through the request-service bridge (`V1_SERVICE_ALLOWED`, 15 methods;
   bucket-E design 2026-05-30). The SDLC tab now resolves and renders instead of
   hanging on its loading screen, and the Level-Up SDLC badge
-  (`page-experiments.ts:221`) populates. **Per-harness caveat:**
+  (`page-experiments.ts:221`) populates. **Per-harness caveat (RESOLVED by the 2026-06-04 sync):**
   `getSdlcToolAnalysis` is pure session math and populates for **all** harnesses;
   `getSdlcRepoScan` / `getWorkspaceDeps` resolve a workspace root only when the
-  parser recorded a `workspaceRootPath` — **only the Codex parser does**
-  (`parser-codex.ts:532`), plus VS Code `workspaceStorage`. For Claude / OpenCode
-  the root is unresolved, so repo-scan and deps return empty (the page shows its
-  "No workspace repos resolved" empty state; quiz personalization stays generic).
-  See Follow-up.
+  parser recorded a `workspaceRootPath` — as of upstream `cb61436` (#86) **all three** parsers
+  do (`parser-claude.ts:678` `cwd`, `parser-opencode.ts:303` `rawSession.directory`,
+  `parser-codex.ts:532` `meta.cwd`), plus VS Code `workspaceStorage`. Repo-scan and deps now
+  populate for every harness when the session recorded a valid directory; the "No workspace
+  repos resolved" empty state remains only for sessions with no resolvable root. See Follow-up.
 - **SDLC GitHub data** — `getSdlcGitHubData`. Needs GitHub auth / network
   (`vscode.authentication.getSession('github', …)` + outbound fetch) and has no
   call site in `page-sdlc.ts`. **Hard** — the sole remaining deferred bucket-E
   method.
 
-**Follow-up (tracked separately, NOT in the bucket-E change):** the Claude
-(`parser-claude.ts:668`) and OpenCode (`parser-opencode.ts:293`) parsers don't set
-`workspaceRootPath` the way Codex (`parser-codex.ts:532`) does. A ~2-line portable
-fix (`workspaceRootPath: cwd` / `: rawSession.directory`, guarded by the existing
-`fs.existsSync`) would light up repo-scan + deps + quiz personalization for those
-harnesses. It is shared-`src/` drift (outside `src/standalone/`), so it is an
-upstream-it candidate kept out of the allowlist-only bucket-E change by design.
+**Follow-up — RESOLVED upstream (2026-06-04 sync).** The Claude (`parser-claude.ts:678`,
+`workspaceRootPath: cwd || undefined`) and OpenCode (`parser-opencode.ts:303`,
+`: rawSession.directory || undefined`) parsers now set `workspaceRootPath` the way Codex
+(`parser-codex.ts:532`, `meta.cwd`) does — landed via upstream `cb61436` (#86), exactly the
+upstream-it candidate this Follow-up flagged. Because it was shared-`src/` change (outside
+`src/standalone/`), **upstreaming was the correct remediation** — not a fork edit that would
+have broken the additive-only invariant. Repo-scan + deps + quiz personalization now light up
+for all three harnesses. Kept here as history.
 
 ## Per-method degradations (within otherwise-shipped pages)
 
@@ -189,14 +207,15 @@ exposure gap:
 |---|---|---|---|---|
 | Burndown | `saveModelBudgets`, `loadModelBudgets` | `page-burndown.ts:95,103` | chart works; budgets don't persist across reloads | A |
 | Anti-Patterns | `reviewLocalRules` | `page-antipatterns.ts:1025` | "review pending rules" button errors offline | C |
-| Learning | `getWorkspaceDeps` | `page-learning.ts:686` | exposed (bucket E); quiz personalization uses real deps for Codex / VS Code, generic for Claude / OpenCode (unresolved root) | E |
+| Learning | `getWorkspaceDeps` | `page-learning.ts:686` | exposed (bucket E); since the 2026-06-04 sync quiz personalization uses real deps for **all** harnesses (Claude / OpenCode parsers set `workspaceRootPath`, `cb61436`/#86), generic only when no valid directory was recorded | E |
 
 ## Priority notes
 
 - **SDLC tab (bucket E) — SHIPPED (2026-05-30):** `getSdlcToolAnalysis` +
   `getSdlcRepoScan` + `getWorkspaceDeps` are allowlisted through the request-service
-  bridge; the tab renders (repo-scan column populates for Codex / VS Code, empty for
-  Claude / OpenCode pending the parser Follow-up).
+  bridge; the tab renders. Repo-scan now populates for **all** harnesses — Claude / OpenCode
+  gained `workspaceRootPath` in the 2026-06-04 upstream sync (`cb61436`/#86), so the parser
+  Follow-up is resolved.
 - **Cheap finishers:** `saveModelBudgets`/`loadModelBudgets` (Burndown),
   `reviewLocalRules` (Anti-Patterns) — small write/read paths that complete
   already-shipped pages.
