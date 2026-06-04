@@ -98,7 +98,7 @@ out.push(`  exposed (union)    = ${exposed.size}   ${flag(exposed.size, BASELINE
 out.push(`  universe (upstream)= ${universe.size}`);
 out.push(`  gap                = ${gap.length}   (universe \\ exposed)`);
 out.push('');
-out.push('## gap methods (universe \\ exposed) — bucket / difficulty / Effect stay HUMAN');
+out.push('## gap methods (universe \\ exposed) — feature status (✅/⚠️/❌/⛔) stays HUMAN');
 for (const m of gap) {
   const loc = tryGrep(`git grep -n "  ${m}:" upstream/main -- src/core/types/rpc-types.ts`)
     .split('\n')[0].trim().replace(/^upstream\/main:/, '');
