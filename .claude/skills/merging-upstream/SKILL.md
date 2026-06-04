@@ -2,10 +2,10 @@
 name: merging-upstream
 description: >-
   Use when syncing this fork with upstream, merging upstream/main, checking
-  standalone parity gaps, regenerating STANDALONE-PARITY-GAPS, or auditing whether
-  fork-authored edits have leaked outside src/standalone/. Triggers: "sync upstream",
-  "merge upstream/main", "parity gaps", "what features is the fork missing",
-  "check the additive-only invariant", "drift gate".
+  standalone parity gaps, rebuilding the STANDALONE-PARITY-GAPS feature inventory,
+  or auditing whether fork-authored edits have leaked outside src/standalone/.
+  Triggers: "sync upstream", "merge upstream/main", "parity gaps",
+  "what features is the fork missing", "check the additive-only invariant", "drift gate".
 ---
 
 # Merging Upstream
@@ -61,20 +61,28 @@ Run everything from the repo root.
    shipped-page degradation call sites, and any methods upstream added since the base
    ("allowlist decision needed").
 
-4. **DRAFT REPORT** — Regenerate `docs-fork/STANDALONE-PARITY-GAPS.md` from
-   `report-template.md`, filling the auto sections from step 3's output. The report tracks
-   **functional parity only** — upstream functionality not exposed/implemented in
-   `src/standalone/`. **Preserve every existing bucket** (the ledger is append-only — A–E
-   today, more as merges surface features); leave bucket-letter / difficulty / Effect /
-   Priority as `TODO` for a human. Flag newly-appeared upstream methods
-   explicitly. **Never add a "merge debt" / "fork is behind upstream" bucket** — being behind
-   is a *sync status* (step 1's `behind` count, step 2's drift gate), not a parity gap. When
-   upstream is ahead, scan the delta (`git diff <merge-base> upstream/main`) for genuinely
-   **new functionality** — features only, **excluding** bug fixes, refactors, dep bumps,
-   tests, infra, and VS Code-only surfaces — and, for each new feature `src/standalone/`
-   doesn't implement, **append a new lettered bucket**. The bucket list is an **append-only
-   ledger**: never renumber or delete a bucket; one bucket per feature; an implemented bucket
-   is marked `SHIPPED (<date>)` **in place** by the implementing agent, never removed.
+4. **REBUILD FEATURE INVENTORY** — Regenerate `docs-fork/STANDALONE-PARITY-GAPS.md` from
+   `report-template.md` by **re-analyzing both repos and rebuilding every feature row** (the
+   inventory is regenerated, not patched — every feature row is rebuilt fresh, never carried
+   forward):
+   a. **Tripwire** — read step 3's `parity-gap.mjs` output (new RPC methods? silent
+      degradations? count drift?) and paste its counts block into the doc's appendix.
+   b. **Enumerate upstream features** — re-read the whole upstream surface: nav/routes
+      (`src/webview/panel-html.ts`), `src/webview/page-*.ts`, `package.json` `contributes.*`
+      (commands / menus / viewsContainers / views), `src/chat/*`, `src/mcp/*`. List every
+      user-facing capability.
+   c. **Determine standalone status** — for each feature, read the standalone exposure
+      (`v1-allowed.ts`, `v1-service-allowed.ts`, `standalone-native.ts`, the standalone
+      pages/routes, `standalone-html.ts`, `vscode-stub.ts`) and mark it
+      **✅ implemented / ⚠️ partial / ❌ not implemented / ⛔ VS Code-only**. **Never mark ✅
+      from an allowlist entry alone — confirm a working UI path.** Never assume a status; read
+      the code. Put the grounding source ref (or the degradation / blocker) in the Note.
+   d. **Group by functional area**, one `## <area>` table per area (`Feature | Standalone |
+      Note`). A row is a **user-facing capability**; bug fixes, refactors, dep bumps, tests,
+      infra, and build details never get a row (a non-portable *feature* does, marked ⛔). Git
+      *sync status* (how far behind upstream) is **not** a row — it's step 1's `behind` count
+      + step 2's drift gate. Retain the **LLM data-flow / configuration transparency** note
+      verbatim under the LLM provider tier.
 
 5. **ASK** — Present the drift classification + the gap delta. **STOP and ask the human
    before merging.** Preview with
@@ -134,10 +142,10 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 
 - **Low (scripts, run exactly):** the deterministic, dangerous git plumbing — fetch,
   merge-base diff, set-difference, the build self-guard. Only output enters context.
-- **High (your judgment):** drift classification (upstream-it vs re-merge), **appending** a
-  new feature bucket per surfaced upstream feature (append-only ledger — never renumber/delete),
-  is-this-a-feature vs a fix/refactor when scanning the upstream delta, the report narrative,
-  conflict triage.
+- **High (your judgment):** drift classification (upstream-it vs re-merge), the **full feature
+  inventory rebuild grounded in code** (enumerate upstream features, read the standalone
+  exposure, assign ✅/⚠️/❌/⛔), the is-this-a-user-facing-feature judgment, the report
+  narrative, conflict triage.
 
 ## Scripts
 
@@ -145,7 +153,7 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
 |---|---|---|
 | `scripts/fetch-upstream.sh` | add remote + rerere (idempotent), fetch, print refs | remote/global config only |
 | `scripts/drift-gate.sh` | merge-base authorship gate + override preconditions; classifies drift | no |
-| `scripts/parity-gap.mjs` | `universe \ exposed` gap, counts, degradations, new-method delta | no |
+| `scripts/parity-gap.mjs` | tripwire signal (counts / new methods / degradations) feeding the feature-inventory rebuild | no |
 | `scripts/guarded-merge.sh` | `plan` (read-only) / `execute` (branch + guarded merge + build gate) / `land` (ff-only sync→local main, re-gates) | `execute`, `land` |
 
 ## Common mistakes
@@ -160,14 +168,15 @@ the 2nd+ sync. Recover a bad recording with `git rerere forget <path>`.
   standalone-only re-export + an esbuild `onResolve` redirect (see `reference.md`).
 - **Trusting an allowlist header comment for counts** → count the Set *literally*;
   `parity-gap.mjs` strips comments first so `require('vscode')` can't inflate the count.
-- **Adding a "merge debt" / "fork is behind upstream" bucket to the parity report** → being
-  behind is a *sync status* (step 1's `behind` count + the drift gate), not a standalone
-  parity gap. Only add to `STANDALONE-PARITY-GAPS.md` when upstream shipped **new
-  functionality** `src/standalone/` doesn't implement — and only *features*, never bug fixes,
-  refactors, dep bumps, tests, infra, or VS Code-only surfaces.
-- **Renumbering, merging, or deleting buckets** → the bucket list is an **append-only ledger**.
-  Each new feature gets the next free letter (one bucket per feature); an implemented one is
-  marked `SHIPPED (<date>)` **in place** by the implementing agent. Never reorganize the ledger.
+- **Tracking "fork is behind upstream" as a feature row** → being behind is a *sync status*
+  (step 1's `behind` count + the drift gate), not a parity gap. A feature row is a *user-facing
+  capability*; bug fixes, refactors, dep bumps, tests, and infra never get a row.
+- **Marking ✅ from an allowlist entry without confirming a working UI path** → an allowlisted
+  method with no standalone caller is ⚠️ (exposed-but-unreachable), not ✅. Read the standalone
+  page/route, not just the allowlist Set.
+- **Assuming a status instead of reading code** → every ✅/⚠️/❌/⛔ must be grounded in code read
+  in both repos during the rebuild. The Note carries the source ref so the next rebuild can
+  re-check it.
 - **Pushing, or *auto*-merging onto `main`** → never. The skill stops at a reviewed
   `sync/upstream-<date>` branch; `main` only moves via the explicit `land` follow-up
   (fast-forward, local-only) after the human approves. Never push.
