@@ -9,8 +9,9 @@
 // methods upstream added since the fork's merge-base ("allowlist decision needed").
 //
 // Prints a report to stdout. It does NOT overwrite docs-fork/STANDALONE-PARITY-GAPS.md —
-// that doc carries human bucket A–F / difficulty / Effect curation; the skill drafts it
-// from report-template.md using this output.
+// that doc is a human feature inventory (✅/⚠️/❌/⛔ per upstream feature, grounded in code).
+// This script is a TRIPWIRE / grounding signal (counts, new methods, silent degradations)
+// feeding the feature-inventory rebuild; the skill pastes its counts into the doc's appendix.
 //
 // Run from the repo root:
 //   node .claude/skills/merging-upstream/scripts/parity-gap.mjs
@@ -22,7 +23,7 @@ const tryGrep = (cmd) => { try { return sh(cmd); } catch { return ''; } }; // gi
 // recorded baseline (§4.3) — counts prove the parser counted the Set literally and did
 // not pick up comment tokens. These are EXPECTED-to-evolve as the fork allowlists more;
 // a mismatch is a DRIFT note for a human, not a hard failure.
-const BASELINE = { v1: 52, service: 12, native: 1, exposed: 65 };
+const BASELINE = { v1: 52, service: 15, native: 1, exposed: 68 };
 
 // ---- refs --------------------------------------------------------------------
 const base = sh('git merge-base HEAD upstream/main').trim();
