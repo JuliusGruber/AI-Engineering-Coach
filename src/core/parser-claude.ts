@@ -695,7 +695,7 @@ function buildClaudeRequest(
   return request;
 }
 
-function parseClaudeSessionFile(
+export function parseClaudeSessionFile(
   filePath: string,
   wsId: string,
   wsName: string,
@@ -758,5 +758,6 @@ function parseClaudeSessionFile(
     workspaceRootPath: cwd || undefined,
     launcherKind,
     entrypoint,
+    sourceFilePath: filePath,
   });
 }

@@ -170,6 +170,16 @@ describe('parseClaudeSessions', () => {
     });
   });
 
+  it('records the on-disk source file path on each parsed session', () => {
+    withProjectsDir('s.jsonl', [
+      makeUser('hello', '2025-06-15T10:00:00Z'),
+      makeAssistant('hi', '2025-06-15T10:00:01Z', { input_tokens: 10, output_tokens: 5 }),
+    ], (projectsDir) => {
+      const session = parseClaudeSessions(projectsDir)[0].sessions[0];
+      expect(session.sourceFilePath).toBe(path.join(projectsDir, '-Users-me-proj', 's.jsonl'));
+    });
+  });
+
   it('skips tool_result-only user records and merges following assistant into prior real user request', () => {
     withProjectsDir('s.jsonl', [
       makeUser('write a file please'),
