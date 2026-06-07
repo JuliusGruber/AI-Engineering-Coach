@@ -7,8 +7,8 @@ from a full re-analysis of both repos on every sync — the table is regenerated
 nav/pages/`contributes.*`/chat/mcp and the standalone allowlists, routes, pages, and stubs);
 the grounding ref is in each Note.
 
-**Staleness** — derived `89c7688` (merge-base **==** upstream/main) → re-verified `89c7688`,
-**0 behind** (synced 2026-06-04). If `git rev-parse upstream/main` ≠ `89c7688`, regenerate
+**Staleness** — derived `9909b36` (merge-base **==** upstream/main) → re-verified `9909b36`,
+**0 behind** (synced 2026-06-07). If `git rev-parse upstream/main` ≠ `9909b36`, regenerate
 (run the `merging-upstream` skill, step 4).
 
 **Legend** — ✅ implemented · ⚠️ partial · ❌ not implemented · ⛔ VS Code-only
@@ -126,7 +126,7 @@ Live `parity-gap.mjs` output (header + counts), pasted on every rebuild. Support
 only — not the doc's structure.
 
 ```
-# parity-gap — derived 89c7688 (merge-base) -> re-verified 89c7688 (upstream/main), 0 behind
+# parity-gap — derived 9909b36 (merge-base) -> re-verified 9909b36 (upstream/main), 0 behind
 
 V1_ALLOWED         = 52   OK
 V1_SERVICE_ALLOWED = 15   OK
