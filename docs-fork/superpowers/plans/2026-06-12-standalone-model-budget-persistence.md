@@ -46,7 +46,7 @@ No edits to `src/webview/`, `src/core/`, or anything else outside `src/standalon
 - Create: `src/standalone/model-budget-store.ts`
 - Test: `src/standalone/__tests__/model-budget-store.test.ts`
 
-- [ ] **Step 1: Export `atomicWriteJson` from `state.ts`**
+- [x] **Step 1: Export `atomicWriteJson` from `state.ts`**
 
 In `src/standalone/state.ts:26`, change:
 
@@ -62,7 +62,7 @@ export function atomicWriteJson(filePath: string, value: unknown): void {
 
 (One keyword. The store reuses it instead of duplicating the tmp-write-rename dance. `state.ts` is a fork file — invariant-safe.)
 
-- [ ] **Step 2: Write the failing store tests**
+- [x] **Step 2: Write the failing store tests**
 
 Create `src/standalone/__tests__/model-budget-store.test.ts`:
 
@@ -168,13 +168,13 @@ describe('file mode', () => {
 });
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `npx vitest run src/standalone/__tests__/model-budget-store.test.ts`
 
 Expected: FAIL — `Cannot find module '../model-budget-store'` (or equivalent resolve error).
 
-- [ ] **Step 4: Implement the store**
+- [x] **Step 4: Implement the store**
 
 Create `src/standalone/model-budget-store.ts`:
 
@@ -229,13 +229,13 @@ export function readModelBudgets(): Record<string, number> {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `npx vitest run src/standalone/__tests__/model-budget-store.test.ts src/standalone/__tests__/state.test.ts`
 
 Expected: ALL PASS (state.test.ts included to confirm the `export` keyword broke nothing).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/standalone/state.ts src/standalone/model-budget-store.ts src/standalone/__tests__/model-budget-store.test.ts
