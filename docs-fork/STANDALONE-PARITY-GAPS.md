@@ -7,10 +7,10 @@ from a full re-analysis of both repos on every sync — the table is regenerated
 nav/pages/`contributes.*`/chat/mcp and the standalone allowlists, routes, pages, and stubs);
 the grounding ref is in each Note.
 
-**Staleness** — derived `9909b36` (merge-base) → re-verified `a06dd7e` (upstream/main),
-**9 behind** (rebuilt 2026-06-12, pre-merge; the 9 upstream commits touch only `.github/`
-agentic-workflow infra + 2 test files — no user-facing `src/` surface changed). If
-`git rev-parse upstream/main` ≠ `a06dd7e`, regenerate (run the `merging-upstream` skill, step 4).
+**Staleness** — derived `a06dd7e` (merge-base **==** upstream/main) → re-verified `a06dd7e`,
+**0 behind** (synced 2026-06-12; that sync brought only `.github/` agentic-workflow infra +
+2 test files — no user-facing `src/` surface changed). If `git rev-parse upstream/main` ≠
+`a06dd7e`, regenerate (run the `merging-upstream` skill, step 4).
 
 **Legend** — ✅ implemented · ⚠️ partial · ❌ not implemented · ⛔ VS Code-only
 
@@ -127,7 +127,7 @@ Live `parity-gap.mjs` output (header + counts), pasted on every rebuild. Support
 only — not the doc's structure.
 
 ```
-# parity-gap — derived 9909b36 (merge-base) -> re-verified a06dd7e (upstream/main), 9 behind
+# parity-gap — derived a06dd7e (merge-base) -> re-verified a06dd7e (upstream/main), 0 behind
 
 V1_ALLOWED         = 52   OK
 V1_SERVICE_ALLOWED = 15   OK
