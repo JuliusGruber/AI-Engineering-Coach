@@ -23,7 +23,7 @@ function serverStateFile(): string {
   return path.join(stateDir(), SERVER_STATE_FILE);
 }
 
-function atomicWriteJson(filePath: string, value: unknown): void {
+export function atomicWriteJson(filePath: string, value: unknown): void {
   const tmp = `${filePath}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, filePath);
