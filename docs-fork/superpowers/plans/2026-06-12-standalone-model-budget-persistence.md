@@ -488,7 +488,7 @@ The spec (§6) makes these part of the deliverable, not follow-up. The tripwire 
 - Modify: `.claude/skills/merging-upstream/scripts/parity-gap.mjs:26`
 - Modify: `docs-fork/STANDALONE-PARITY-GAPS.md:48,52,130-144`
 
-- [ ] **Step 1: Bump the tripwire baseline**
+- [x] **Step 1: Bump the tripwire baseline**
 
 In `.claude/skills/merging-upstream/scripts/parity-gap.mjs:26`, change:
 
@@ -502,7 +502,7 @@ to:
 const BASELINE = { v1: 52, service: 15, native: 3, exposed: 70 };
 ```
 
-- [ ] **Step 2: Run the tripwire and verify the new counts**
+- [x] **Step 2: Run the tripwire and verify the new counts**
 
 Run: `node .claude/skills/merging-upstream/scripts/parity-gap.mjs`
 
@@ -519,7 +519,7 @@ gap                = 5   (universe \ exposed)
 
 and the gap list must NO LONGER contain `loadModelBudgets`/`saveModelBudgets` (5 methods: `calibrateRule`, `createSkill`, `getSdlcGitHubData`, `reviewLocalRules`, `runRuleTests`). The per-method degradations section must no longer show the two budget methods. If any count differs, STOP — the handlers were mis-parsed (check the 2-space key indentation in `standalone-native.ts`) — do not paper over it by editing the baseline again.
 
-- [ ] **Step 3: Flip the Model-budget persistence row**
+- [x] **Step 3: Flip the Model-budget persistence row**
 
 In `docs-fork/STANDALONE-PARITY-GAPS.md:52`, replace:
 
@@ -533,7 +533,7 @@ with:
 | Model-budget persistence | ✅ | `saveModelBudgets`/`loadModelBudgets` are Tier-1 native handlers (`standalone-native.ts`), backed by `model-budget-store.ts` → `~/.ai-engineer-coach/model-budgets.json` (versioned, atomic, 0o600); call sites `page-burndown.ts:95,103` unchanged |
 ```
 
-- [ ] **Step 4: Flip the Burndown chart row**
+- [x] **Step 4: Flip the Burndown chart row**
 
 In `docs-fork/STANDALONE-PARITY-GAPS.md:48`, replace:
 
@@ -547,7 +547,7 @@ with:
 | Burndown chart | ✅ | renders via the `FF_TOKEN_REPORTING_ENABLED` build override (`standalone-constants.ts:11` flips it `true`; esbuild `onResolve` redirects `core/constants` only in the standalone bundle; the published extension stays FF=false). `app.ts:27` only bounces `burndown`→`dashboard` when FF is false, so the route works in standalone. Model budgets persist — see Model-budget persistence row |
 ```
 
-- [ ] **Step 5: Update the appendix tripwire block and gap-method sentence**
+- [x] **Step 5: Update the appendix tripwire block and gap-method sentence**
 
 In `docs-fork/STANDALONE-PARITY-GAPS.md`, the fenced block at lines 130-138: paste the fresh script output (header line + counts) from Step 2. The counts lines become:
 
@@ -579,7 +579,7 @@ Gap methods (5, `universe \ exposed`) and the feature row each maps to:
 `reviewLocalRules` → Local-rule trust approval ❌.
 ```
 
-- [ ] **Step 6: Verify no other fixed-count comments need touching**
+- [x] **Step 6: Verify no other fixed-count comments need touching**
 
 The spec's §6 "count comments" item — both already verified, record for the record:
 - `standalone-native.ts` header comment carries no method count (it's just the file path) — adding one is not required; if you added one in Task 2, make sure it says 3.
@@ -587,7 +587,7 @@ The spec's §6 "count comments" item — both already verified, record for the r
 
 Run: `git grep -n "STANDALONE_NATIVE.*= 1\|native count" -- docs-fork src/standalone` — expected: no hits (nothing stale remains).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add .claude/skills/merging-upstream/scripts/parity-gap.mjs docs-fork/STANDALONE-PARITY-GAPS.md
