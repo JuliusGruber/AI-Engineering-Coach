@@ -766,6 +766,11 @@ describe('findVsCodeDirs — VS Code Server', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-vscode-'));
     const home = process.env.HOME;
     const userProfile = process.env.USERPROFILE;
+    // findVsCodeDirs() branches on process.platform: on win32 it reads editions from
+    // %APPDATA% and skips the .vscode-server block entirely. This test exercises the
+    // non-Windows layout (~/.config + ~/.vscode-server), so pin the platform rather than
+    // relying on the host OS — otherwise it (correctly) returns [] when run on Windows.
+    const realPlatform = process.platform;
     const expected = [
       path.join(root, '.config', 'Code', 'User', 'workspaceStorage'),
       path.join(root, '.config', 'Code - Insiders', 'User', 'workspaceStorage'),
@@ -777,12 +782,14 @@ describe('findVsCodeDirs — VS Code Server', () => {
 
     process.env.HOME = root;
     process.env.USERPROFILE = '';
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
     try {
       expect(findVsCodeDirs()).toEqual(expected);
     } finally {
       process.env.HOME = home;
       process.env.USERPROFILE = userProfile;
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

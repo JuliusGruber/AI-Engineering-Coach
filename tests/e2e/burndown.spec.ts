@@ -45,10 +45,14 @@ test.describe('Burndown', () => {
 
   test('shows current month', async ({ page }) => {
     const content = await page.textContent('#content');
-    // The burndown page defaults to the live current month (page-burndown.ts uses new Date()
-    // and formatMonthLabel's toLocaleString), so derive the expected label the same way
-    // instead of hard-coding it — otherwise the assertion goes stale every month rollover.
-    const expectedMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+    // page-burndown.ts formats the month with toLocaleString('default') in the BROWSER, so
+    // compute the expected label in the same runtime via page.evaluate. Deriving it in Node
+    // would use the OS default locale, which can differ from the browser's (e.g. a German
+    // host renders "Juni" in Node but the page shows "June"). This still tracks the live
+    // month without hard-coding it, so it never goes stale on a month rollover.
+    const expectedMonth = await page.evaluate(() =>
+      new Date().toLocaleString('default', { month: 'long', year: 'numeric' }),
+    );
     expect(content).toContain(expectedMonth);
   });
 });
