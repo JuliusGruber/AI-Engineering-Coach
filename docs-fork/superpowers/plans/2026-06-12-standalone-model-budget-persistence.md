@@ -618,7 +618,7 @@ Expected: `VERDICT: INVARIANT OK — additive-only holds, override preconditions
 Run: `node .claude/skills/merging-upstream/scripts/parity-gap.mjs`
 Expected: all four counts `OK`, `gap = 5`, and NO budget methods under "per-method degradations".
 
-- [ ] **Step 5 (optional, manual): end-to-end smoke**
+- [x] **Step 5 (optional, manual): end-to-end smoke**
 
 Start the standalone server, open the Burndown page, set a model budget, hard-reload the page → the budget survives. Then `Get-Content ~\.ai-engineer-coach\model-budgets.json` shows `{ "version": 1, "budgets": { ... } }`. (Webview-shim note from the spec §4: neither method appears in `BANNER_WORTHY`/`RESOLVE_EMPTY_WHEN_DISABLED` — verified 2026-06-12 — so no shim change is needed for this to work.)
 
