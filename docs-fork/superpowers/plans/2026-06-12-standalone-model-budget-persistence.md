@@ -406,7 +406,7 @@ No production code changes — `dispatcher.ts:37-48` already routes any `STANDAL
 **Files:**
 - Test: `src/standalone/__tests__/dispatcher.test.ts`
 
-- [ ] **Step 1: Add the routing tests**
+- [x] **Step 1: Add the routing tests**
 
 In `src/standalone/__tests__/dispatcher.test.ts`, add next to the existing `vi.mock('open', ...)` (line 8) a store mock — the dispatcher tests verify routing, not persistence, so no real fs:
 
@@ -459,19 +459,19 @@ In the `afterEach` (lines 35-40), add:
   });
 ```
 
-- [ ] **Step 2: Run the dispatcher tests**
+- [x] **Step 2: Run the dispatcher tests**
 
 Run: `npx vitest run src/standalone/__tests__/dispatcher.test.ts`
 
 Expected: ALL PASS (including the pre-existing 20 tests).
 
-- [ ] **Step 3: Run the full unit suite**
+- [x] **Step 3: Run the full unit suite**
 
 Run: `npm run test`
 
 Expected: ALL PASS, no regressions.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/standalone/__tests__/dispatcher.test.ts
