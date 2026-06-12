@@ -8,6 +8,14 @@ import open from 'open';
 vi.mock('open', () => ({ default: vi.fn() }));
 const mockedOpen = vi.mocked(open);
 
+import { readModelBudgets, writeModelBudgets } from '../model-budget-store';
+vi.mock('../model-budget-store', () => ({
+  readModelBudgets: vi.fn(() => ({ 'claude-fable-5': 500000 })),
+  writeModelBudgets: vi.fn(),
+}));
+const mockedReadBudgets = vi.mocked(readModelBudgets);
+const mockedWriteBudgets = vi.mocked(writeModelBudgets);
+
 // Load the REAL panel-rpc (resolving the transitive `vscode` via the stub alias),
 // but wrap getRpcHandler so each test can inject a fake handler / undefined.
 vi.mock('../../webview/panel-rpc', async (importOriginal) => {
@@ -37,6 +45,8 @@ afterEach(() => {
   mockedGetRpcHandler.mockReset();
   mockedOpen.mockReset();
   mockedDispatchService.mockReset();
+  mockedReadBudgets.mockClear();
+  mockedWriteBudgets.mockReset();
 });
 
 describe('dispatch — allowlist gate', () => {
@@ -120,6 +130,34 @@ describe('dispatch — native tier', () => {
     expect(res).toEqual({ ok: true, data: { ok: true } });
     expect(mockedOpen).toHaveBeenCalledTimes(1);
     expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+  });
+
+  it('routes saveModelBudgets via Tier 1 with empty ctx (no allowlist, no data-ready gate)', async () => {
+    const res = await dispatch('saveModelBudgets', { budgets: { m: 100 } }, {});
+    expect(res).toEqual({ ok: true, data: { ok: true } });
+    expect(mockedWriteBudgets).toHaveBeenCalledWith({ m: 100 });
+    expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+    expect(mockedDispatchService).not.toHaveBeenCalled();
+  });
+
+  it('routes loadModelBudgets via Tier 1 with empty ctx, resolving the bare record', async () => {
+    const res = await dispatch('loadModelBudgets', {}, {});
+    expect(res).toEqual({ ok: true, data: { 'claude-fable-5': 500000 } });
+    expect(mockedGetRpcHandler).not.toHaveBeenCalled();
+    expect(mockedDispatchService).not.toHaveBeenCalled();
+  });
+
+  it('wraps a store throw as handler-error (Tier-1 crash safety)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockedWriteBudgets.mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    const res = await dispatch('saveModelBudgets', { budgets: { m: 100 } }, {});
+    expect(res).toEqual({
+      ok: false,
+      error: { code: 'handler-error', method: 'saveModelBudgets', message: 'disk full' },
+    });
+    expect(errSpy).toHaveBeenCalled();
   });
 });
 
