@@ -250,7 +250,7 @@ git commit -m "feat(standalone): add model-budget-store (versioned, atomic, resi
 - Modify: `src/standalone/standalone-native.ts`
 - Test: `src/standalone/__tests__/standalone-native.test.ts`
 
-- [ ] **Step 1: Extend the handler tests (failing)**
+- [x] **Step 1: Extend the handler tests (failing)**
 
 In `src/standalone/__tests__/standalone-native.test.ts`, replace the import/mock preamble (lines 1-10) with:
 
@@ -340,13 +340,13 @@ describe('STANDALONE_NATIVE.loadModelBudgets', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify the new ones fail**
+- [x] **Step 2: Run the tests to verify the new ones fail**
 
 Run: `npx vitest run src/standalone/__tests__/standalone-native.test.ts`
 
 Expected: the 4 `openExternal` tests PASS; every new budget test FAILS (`STANDALONE_NATIVE.saveModelBudgets is not a function`).
 
-- [ ] **Step 3: Implement the handlers**
+- [x] **Step 3: Implement the handlers**
 
 In `src/standalone/standalone-native.ts`, add after the imports:
 
@@ -384,13 +384,13 @@ and add two entries to the `STANDALONE_NATIVE` map after `openExternal` (KEEP th
   },
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npx vitest run src/standalone/__tests__/standalone-native.test.ts`
 
 Expected: ALL PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/standalone/standalone-native.ts src/standalone/__tests__/standalone-native.test.ts
