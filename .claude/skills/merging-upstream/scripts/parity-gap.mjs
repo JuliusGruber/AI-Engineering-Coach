@@ -23,7 +23,7 @@ const tryGrep = (cmd) => { try { return sh(cmd); } catch { return ''; } }; // gi
 // recorded baseline (§4.3) — counts prove the parser counted the Set literally and did
 // not pick up comment tokens. These are EXPECTED-to-evolve as the fork allowlists more;
 // a mismatch is a DRIFT note for a human, not a hard failure.
-const BASELINE = { v1: 52, service: 15, native: 1, exposed: 68 };
+const BASELINE = { v1: 52, service: 15, native: 3, exposed: 70 };
 
 // ---- refs --------------------------------------------------------------------
 const base = sh('git merge-base HEAD upstream/main').trim();

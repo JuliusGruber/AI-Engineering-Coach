@@ -45,11 +45,11 @@ the grounding ref is in each Note.
 ## Token & cost reporting
 | Feature | Standalone | Note |
 |---|---|---|
-| Burndown chart | ⚠️ | renders via the `FF_TOKEN_REPORTING_ENABLED` build override (`standalone-constants.ts:11` flips it `true`; esbuild `onResolve` redirects `core/constants` only in the standalone bundle; the published extension stays FF=false). `app.ts:27` only bounces `burndown`→`dashboard` when FF is false, so the route works in standalone. Model-budget save/load degraded — see Model-budget persistence row |
+| Burndown chart | ✅ | renders via the `FF_TOKEN_REPORTING_ENABLED` build override (`standalone-constants.ts:11` flips it `true`; esbuild `onResolve` redirects `core/constants` only in the standalone bundle; the published extension stays FF=false). `app.ts:27` only bounces `burndown`→`dashboard` when FF is false, so the route works in standalone. Model budgets persist — see Model-budget persistence row |
 | Output Token-Usage tab | ✅ | same FF override flips the tab on in standalone |
 | AI credits / credit burndown | ✅ | `getAiCredits`/`getAiCreditBurndown` (`v1-allowed.ts`) |
 | Token coverage | ✅ | `getTokenCoverage` (`v1-allowed.ts`) |
-| Model-budget persistence | ❌ | `saveModelBudgets`/`loadModelBudgets` NOT exposed (gap list; called at `page-burndown.ts:95,103`); chart works, budgets don't persist across reloads |
+| Model-budget persistence | ✅ | `saveModelBudgets`/`loadModelBudgets` are Tier-1 native handlers (`standalone-native.ts`), backed by `model-budget-store.ts` → `~/.ai-engineer-coach/model-budgets.json` (versioned, atomic, 0o600); call sites `page-burndown.ts:95,103` unchanged |
 
 ## Rules & anti-patterns authoring
 | Feature | Standalone | Note |
@@ -131,16 +131,15 @@ only — not the doc's structure.
 
 V1_ALLOWED         = 52   OK
 V1_SERVICE_ALLOWED = 15   OK
-STANDALONE_NATIVE  = 1    OK
-exposed (union)    = 68   OK
+STANDALONE_NATIVE  = 3    OK
+exposed (union)    = 70   OK
 universe (upstream)= 75
-gap                = 7   (universe \ exposed)
+gap                = 5   (universe \ exposed)
 ```
 
-Gap methods (7, `universe \ exposed`) and the feature row each maps to:
+Gap methods (5, `universe \ exposed`) and the feature row each maps to:
 `calibrateRule` · `runRuleTests` — off-allowlist, deferred (no shipped page reaches them);
 `createSkill` → Create skill ⚠️; `getSdlcGitHubData` → SDLC GitHub data ❌;
-`loadModelBudgets` · `saveModelBudgets` → Model-budget persistence ❌;
 `reviewLocalRules` → Local-rule trust approval ❌.
 
 **Newly-appeared upstream RPC methods needing an allowlist decision: none** (the upstream RPC
