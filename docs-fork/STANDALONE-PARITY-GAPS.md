@@ -7,9 +7,10 @@ from a full re-analysis of both repos on every sync — the table is regenerated
 nav/pages/`contributes.*`/chat/mcp and the standalone allowlists, routes, pages, and stubs);
 the grounding ref is in each Note.
 
-**Staleness** — derived `9909b36` (merge-base **==** upstream/main) → re-verified `9909b36`,
-**0 behind** (synced 2026-06-07). If `git rev-parse upstream/main` ≠ `9909b36`, regenerate
-(run the `merging-upstream` skill, step 4).
+**Staleness** — derived `9909b36` (merge-base) → re-verified `a06dd7e` (upstream/main),
+**9 behind** (rebuilt 2026-06-12, pre-merge; the 9 upstream commits touch only `.github/`
+agentic-workflow infra + 2 test files — no user-facing `src/` surface changed). If
+`git rev-parse upstream/main` ≠ `a06dd7e`, regenerate (run the `merging-upstream` skill, step 4).
 
 **Legend** — ✅ implemented · ⚠️ partial · ❌ not implemented · ⛔ VS Code-only
 
@@ -37,7 +38,7 @@ the grounding ref is in each Note.
 | Context Health | ✅ | `getConfigHealth` (`v1-allowed.ts`); `config-health` route (`app.ts:647`, Improve group) |
 | Context Management | ✅ | `getContextManagement`/`getWorkspaceContextSessions`/`getContextRangeAvailability` (`v1-allowed.ts`); `page-context-mgmt.ts` is imported by `page-config.ts`, reachable via the `config-health` route |
 | Workflow optimization | ✅ | `getWorkflowOptimization` (`v1-allowed.ts`), surfaced within Dashboard (`page-dashboard.ts:376`), Skills (`page-skills.ts:171`), and the Level Up Achievements view (`page-achievements.ts:503`). The dedicated `page-workflows.ts` is **unrouted** (no `workflows` case in `app.ts`), so the feature renders inside those reachable pages, not a standalone Workflows page |
-| Level Up (experiments / achievements / SDLC / learning) | ✅ | `level-up` route → `renderLevelUp` (`page-experiments.ts`), the composition hub that mounts achievements, SDLC, Learning, and the share card; SDLC badge populates (`page-experiments.ts:221`) |
+| Level Up (experiments / achievements / SDLC / learning) | ✅ | `level-up` route → `renderLevelUp` (`page-experiments.ts`), the composition hub that mounts achievements, SDLC, Learning, and the share card; SDLC badge populates (`page-experiments.ts:223`) |
 | Peers — social share card | ✅ | No peers/leaderboard page or RPC method exists upstream (none in `rpc-types.ts`; no `peers` route in `app.ts`/nav). The reachable social feature is the Level Up **Share** card (`renderShareCard`, registered `page-experiments.ts:70`), working in standalone via exposed getters (`getStats`/`getCodeProduction`/`getWorkLifeBalance`/`getFlowState`/`getDailyActivity`/`getAntiPatterns`) + `exportSummary` + `openExternal` |
 | Insights | ⚠️ | `getInsights` is allowlisted (`v1-allowed.ts`) but **exposed-but-unreachable** — its only consumer `page-insights.ts:108` is not in the `app.ts` route switch and is imported by nothing (dead upstream too; no `data-page="insights"` nav). No working standalone UI path |
 
@@ -56,7 +57,7 @@ the grounding ref is in each Note.
 | Rule Editor (create / edit / tune / live-test) | ✅ | `getRuleEditor`/`getRuleSource`/`getRulePreview`/`saveRule`/`updateRuleThreshold`/`testRuleLive` (`v1-allowed.ts`); `saveRule` writes via Node fs; `rule-editor` route reuses `renderAntiPatterns` (`app.ts:645`) |
 | Anti-Patterns Editor | ✅ | editable markdown rules + threshold tuning via `saveRule`/`updateRuleThreshold` (`page-antipatterns-editor.ts`, imported by `page-antipatterns.ts`); `testRuleLive` reached by the rule-editor modal (`page-antipatterns-editor.ts:297`) |
 | Export Summary | ✅ | `exportSummary` (`v1-service-allowed.ts`) via request-service bridge (`COACH_EXPORT_DIR` / browser download) |
-| Import registry rules | ⚠️ | `importRegistryRules` allowlisted (`v1-allowed.ts`, handler `panel-rpc.ts:1242`) but exposed forward-only — no standalone UI page calls it yet; a write flow would reuse the shipped `saveRule` |
+| Import registry rules | ⚠️ | `importRegistryRules` allowlisted (`v1-allowed.ts`, handler `panel-rpc.ts:1279`) but exposed forward-only — no webview page calls it (verified: zero callers in `page-*.ts`/`app.ts`); a write flow would reuse the shipped `saveRule` |
 | Local-rule trust approval | ❌ | `reviewLocalRules` NOT exposed (verified absent from all three tiers; in the gap list). Was a VS Code quick-pick (`extension.ts:79`) backed by a `globalState` Memento (`rule-trust.ts:44`). Degrades the shipped Anti-Patterns "review pending rules" button (`page-antipatterns.ts:1025`) — needs a browser modal + standalone trust store |
 
 ## Skills (install / discover / triage / generate)
@@ -126,7 +127,7 @@ Live `parity-gap.mjs` output (header + counts), pasted on every rebuild. Support
 only — not the doc's structure.
 
 ```
-# parity-gap — derived 9909b36 (merge-base) -> re-verified 9909b36 (upstream/main), 0 behind
+# parity-gap — derived 9909b36 (merge-base) -> re-verified a06dd7e (upstream/main), 9 behind
 
 V1_ALLOWED         = 52   OK
 V1_SERVICE_ALLOWED = 15   OK
