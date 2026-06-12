@@ -598,22 +598,22 @@ git commit -m "docs(fork): flip model-budget persistence + burndown rows to gree
 
 ### Task 5: Final verification (no commit)
 
-- [ ] **Step 1: Full unit suite**
+- [x] **Step 1: Full unit suite**
 
 Run: `npm run test`
 Expected: ALL PASS.
 
-- [ ] **Step 2: Build**
+- [x] **Step 2: Build**
 
 Run: `npm run build`
 Expected: clean exit, no new esbuild warnings (the store/handlers use only `fs`/`path`, both already bundled for `state.ts`).
 
-- [ ] **Step 3: Drift gate**
+- [x] **Step 3: Drift gate**
 
 Run: `bash .claude/skills/merging-upstream/scripts/drift-gate.sh`
 Expected: `VERDICT: INVARIANT OK — additive-only holds, override preconditions intact.` and exit 0. Anything else: STOP and find which file leaked outside `src/standalone/` (only `state.ts`, `standalone-native.ts`, `model-budget-store.ts`, tests, the tripwire script, and the parity doc should have changed — `git diff main --stat` to check).
 
-- [ ] **Step 4: Tripwire once more (post-commit)**
+- [x] **Step 4: Tripwire once more (post-commit)**
 
 Run: `node .claude/skills/merging-upstream/scripts/parity-gap.mjs`
 Expected: all four counts `OK`, `gap = 5`, and NO budget methods under "per-method degradations".
