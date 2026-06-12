@@ -251,7 +251,7 @@ describe('cli rpc + lifecycle', () => {
 
   it('generateLearningQuiz returns a standalone (non-Copilot) error with no LLM key (grilling decision 2)', async () => {
     const home = makeTmpHome();
-    const b = track(await bootCli(home, ['--port', '7366']), home);
+    const b = track(await bootCli(home, ['--port', '7366'], 20_000, { ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '' }), home); // no LLM env
     const ws = await wsConnect(b);
     await wsWaitFor(ws, 'dataReady');
     const res = await wsRequest(ws, 'generateLearningQuiz', { difficulty: 'easy', languages: ['ts'] }, 'nokey1');

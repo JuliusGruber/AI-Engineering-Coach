@@ -31,6 +31,9 @@ const URL_RE = /coach (already )?running at (http:\/\/127\.0\.0\.1:(\d+)\/\?t=([
 // line is seen on stderr; rejects on early exit or timeout (with captured stderr).
 export function bootCli(home: string, args: string[] = [], timeoutMs = 20_000, extraEnv: Record<string, string> = {}): Promise<Booted> {
   const child = fork(CLI, ['--no-open', ...args], {
+    // cwd=home so the CLI's working-directory .env autoload never picks up a real
+    // key from the repo root (would turn the no-LLM-key tests into live API calls).
+    cwd: home,
     env: { ...process.env, HOME: home, USERPROFILE: home, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
