@@ -75,6 +75,24 @@ export const env = {
   },
 };
 
+// Both consumers below are unreachable in standalone — createSkill is intercepted by
+// webview-shim.ts (BANNER_WORTHY) before handleCreateSkill runs, and getSdlcGitHubData is
+// excluded from v1-service-allowed.ts — but bundling them as `undefined` raises esbuild's
+// import-is-undefined warning and would TypeError if a future page ever reached them.
+// Reject instead: both call sites already handle rejection (panel-request-service.ts:303
+// posts 'Failed to open Copilot Chat'; getGitHubAccessToken's catch returns undefined).
+export const commands = {
+  executeCommand(_command: string, ..._args: unknown[]): Promise<never> {
+    return Promise.reject(new Error('VS Code commands are not available in standalone.'));
+  },
+};
+
+export const authentication = {
+  getSession(_providerId: string, _scopes?: readonly string[], _opts?: unknown): Promise<never> {
+    return Promise.reject(new Error('VS Code authentication is not available in standalone.'));
+  },
+};
+
 // --- vscode.lm surface (bucket D) ----------------------------------------------
 // See docs-fork/superpowers/spec/2026-05-27-standalone-parity-bucket-d-design.md § A.
 
@@ -151,4 +169,4 @@ export const lm = {
   },
 };
 
-export default { Uri, lm, workspace, window, env, LanguageModelChatMessage, CancellationTokenSource, CancellationError };
+export default { Uri, lm, workspace, window, env, commands, authentication, LanguageModelChatMessage, CancellationTokenSource, CancellationError };
