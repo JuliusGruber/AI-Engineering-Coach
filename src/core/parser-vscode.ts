@@ -195,7 +195,7 @@ export function parseEditState(raw: string, editLocIndex: ParseContext['editLocI
   if (!raw.includes('"textEdit"')) return;
   let state: EditState;
   try { state = JSON.parse(raw) as EditState; } catch (e) {
-    warnCore('parser-vscode', `Corrupt state payload`, e);
+    warnCore('parser-vscode', `Corrupt state payload in ${stateDir}`, e);
     return;
   }
   accumulateEditLoc(state.timeline, editLocIndex, makeInitialContentResolver(state, stateDir));

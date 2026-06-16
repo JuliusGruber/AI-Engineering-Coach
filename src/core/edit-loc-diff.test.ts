@@ -180,8 +180,9 @@ describe('countAddedLines', () => {
     expect(countAddedLines('a\nb\nc\nd\ne', 'a\nb\nd\ne\nf')).toBe(1);
   });
 
-  it('treats a fully-emptied file as one (empty) line — accepted edge convention', () => {
-    expect(countAddedLines('a\nb\nc', '')).toBe(1);
+  it('credits no new lines when a file is fully emptied', () => {
+    // Emptying a file produces no new content, and '' has zero logical lines.
+    expect(countAddedLines('a\nb\nc', '')).toBe(0);
   });
 });
 
@@ -221,20 +222,18 @@ describe('countAddedRemoved', () => {
     expect(countAddedRemoved('a\na\na', 'a\na')).toEqual({ added: 0, removed: 1 });
   });
 
-  it('treats an empty prev as one empty segment (the accumulate path special-cases new files to 0 removed)', () => {
-    // '' is a single empty line in the multiset, so it reads as 1 removed here. Production
-    // never calls countAddedRemoved with an empty prev — accumulateFileOps handles new files
-    // separately and records removed: 0 (see the "records zero removed for a brand-new file" test).
-    expect(countAddedRemoved('', 'a\nb\nc')).toEqual({ added: 3, removed: 1 });
+  it('reports zero removed for an empty prev (empty text has no logical lines)', () => {
+    // '' has zero logical lines, so a brand-new file adds its lines and removes nothing.
+    expect(countAddedRemoved('', 'a\nb\nc')).toEqual({ added: 3, removed: 0 });
   });
 
   it('reports nothing when both sides are empty', () => {
     expect(countAddedRemoved('', '')).toEqual({ added: 0, removed: 0 });
   });
 
-  it('treats a fully-emptied file as one added (empty) line and N removed — accepted edge convention', () => {
-    // '' is a single empty segment that did not exist in prev, so it reads as 1 added.
-    expect(countAddedRemoved('a\nb\nc', '')).toEqual({ added: 1, removed: 3 });
+  it('reports zero added and N removed when a file is fully emptied', () => {
+    // '' has no logical lines, so nothing is added and all of prev's lines are removed.
+    expect(countAddedRemoved('a\nb\nc', '')).toEqual({ added: 0, removed: 3 });
   });
 
   it('keeps added − removed equal to the change in line count for every example', () => {
@@ -248,9 +247,8 @@ describe('countAddedRemoved', () => {
     ];
     for (const [prev, next] of cases) {
       const { added, removed } = countAddedRemoved(prev, next);
-      // forEachLineHash-equivalent segment count: newlines + 1.
-      const seg = (s: string) => s.split('\n').length;
-      expect(added - removed).toBe(seg(next) - seg(prev));
+      // Net change tracks logical line count (matching countLines / forEachLineHash).
+      expect(added - removed).toBe(countLines(next) - countLines(prev));
     }
   });
 });

@@ -77,7 +77,12 @@ function hashLineSlice(text: string, start: number, end: number): number {
   return h;
 }
 
-/** Invokes `cb` once per newline-delimited segment (matching `split('\n')`), including a trailing empty segment. */
+/**
+ * Invokes `cb` once per logical line, matching `countLines`: one call per newline plus a
+ * final call when the text does not end in a newline. Empty text yields no calls, and a
+ * trailing newline is not counted as an extra empty line. This keeps the multiset diff
+ * consistent with `countLines`, so toggling the EOF newline (`"a\n"` ⇄ `"a"`) is a no-op.
+ */
 function forEachLineHash(text: string, cb: (h: number) => void): void {
   let segStart = 0;
   for (let i = 0; i < text.length; i++) {
@@ -86,7 +91,7 @@ function forEachLineHash(text: string, cb: (h: number) => void): void {
       segStart = i + 1;
     }
   }
-  cb(hashLineSlice(text, segStart, text.length));
+  if (segStart < text.length) cb(hashLineSlice(text, segStart, text.length));
 }
 
 /** Logical line count: newlines plus a final line when the text does not end in a newline. '' -> 0. */
