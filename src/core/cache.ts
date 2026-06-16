@@ -14,6 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Session, Workspace } from './types';
+import { EditLoc, EditLocIndex } from './edit-loc-diff';
 import { warnCore } from './log';
 import { parseSessionFile } from './parser-vscode';
 import { parseCLIEventsFile } from './parser-vscode-cli';
@@ -21,7 +22,7 @@ import { parseCLIEventsFile } from './parser-vscode-cli';
 export interface ParseResult {
   workspaces: Map<string, Workspace>;
   sessions: Session[];
-  editLocIndex: Map<string, Map<string, number>>;
+  editLocIndex: EditLocIndex;
   sessionSourceIndex: Map<string, SessionSource>;
 }
 
@@ -92,7 +93,7 @@ const CACHE_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '', '
 const CACHE_FILE = path.join(CACHE_DIR, 'parsed.json');
 const CACHE_META = path.join(CACHE_DIR, 'meta.json');
 
-const CACHE_VERSION = 9;
+const CACHE_VERSION = 11;
 
 interface CacheMetaPayload {
   version: number;
@@ -102,7 +103,7 @@ interface CacheMetaPayload {
 interface SerializedCachePayload {
   workspaces: Array<[string, Workspace]>;
   sessions: Session[];
-  editLocIndex: Array<[string, Array<[string, number]>]>;
+  editLocIndex: Array<[string, Array<[string, EditLoc]>]>;
   sessionSourceIndex: Array<[string, SessionSource]>;
 }
 
@@ -126,7 +127,7 @@ function readSerializedCachePayload(value: unknown): SerializedCachePayload | nu
   return {
     workspaces: value.workspaces as Array<[string, Workspace]>,
     sessions: value.sessions as Session[],
-    editLocIndex: value.editLocIndex as Array<[string, Array<[string, number]>]>,
+    editLocIndex: value.editLocIndex as Array<[string, Array<[string, EditLoc]>]>,
     sessionSourceIndex: Array.isArray(value.sessionSourceIndex)
       ? value.sessionSourceIndex as Array<[string, SessionSource]>
       : [],
@@ -270,7 +271,7 @@ export async function loadCacheData(): Promise<CacheData | null> {
     // Yield after parse to let the event loop breathe
     await new Promise<void>(r => setTimeout(r, 0));
     const workspaces = new Map<string, Workspace>(raw.workspaces);
-    const editLocIndex = new Map<string, Map<string, number>>();
+    const editLocIndex: EditLocIndex = new Map();
     for (const [k, v] of raw.editLocIndex) {
       editLocIndex.set(k, new Map(v));
     }

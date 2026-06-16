@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import { runtimeDebug } from './runtime-debug';
 import { Workspace } from './types';
 import { ParseContext, prefetchCache } from './parser-shared';
+import { EditLoc, EditLocIndex } from './edit-loc-diff';
 import { getMemoryCache, setMemoryCache, computeDirMetasAsync, loadCacheData, saveCacheData, findStaleDirs, clearCache, stripSessionsForMemory } from './cache';
 import type { DirMetas, ParseResult, SessionSource } from './cache';
 import { findVsCodeDirs, scanVsCodeDirs, processWorkspaceEntry, processWorkspaceEntryAsync, harnessFromPath } from './parser-vscode';
@@ -165,7 +166,7 @@ interface WorkerParseResponse {
   result: {
     workspaces: [string, Workspace][];
     sessions: ParseResult['sessions'];
-    editLocIndex: [string, [string, number][]][];
+    editLocIndex: [string, [string, EditLoc][]][];
     sessionSourceIndex: [string, ParseResult['sessionSourceIndex'] extends Map<string, infer V> ? V : never][];
   };
   dirMetas: DirMetas;
@@ -463,7 +464,7 @@ async function collectExternalHarnesses(
 export function parseAllLogs(logsDirs: string[]): ParseResult {
   const workspaces = new Map<string, Workspace>();
   const sessions: import('./types').Session[] = [];
-  const editLocIndex = new Map<string, Map<string, number>>();
+  const editLocIndex: EditLocIndex = new Map();
   const sessionSourceIndex = new Map<string, SessionSource>();
   const ctx: ParseContext = { workspaces, sessions, editLocIndex, sessionSourceIndex, aiLoc: 0 };
 
@@ -596,7 +597,7 @@ export async function parseAllLogsAsyncDetailed(
   report({ phase: 2, detail: 'Cold parse', pct: pct(2, 0) });
   const workspaces = new Map<string, Workspace>();
   const sessions: import('./types').Session[] = [];
-  const editLocIndex = new Map<string, Map<string, number>>();
+  const editLocIndex: EditLocIndex = new Map();
   const sessionSourceIndex = new Map<string, SessionSource>();
   const ctx: ParseContext = { workspaces, sessions, editLocIndex, sessionSourceIndex, aiLoc: 0 };
 
