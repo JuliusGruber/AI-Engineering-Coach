@@ -55,8 +55,10 @@ export function initMessageListener(
   onDataReady: (currentWorkspace: string) => void,
 ): void {
   window.addEventListener('message', (ev) => {
+    if (typeof ev.data !== 'object' || ev.data === null) return;
     const msg = ev.data as Record<string, unknown>;
-    if (msg.type === 'response' && pending.has(msg.id as string)) {
+    if (typeof msg.type !== 'string') return;
+    if (msg.type === 'response' && typeof msg.id === 'string' && pending.has(msg.id)) {
       const { resolve, reject } = pending.get(msg.id as string)!;
       pending.delete(msg.id as string);
       if (msg.data && typeof msg.data === 'object' && (msg.data as Record<string, unknown>).error) {
@@ -149,8 +151,16 @@ declare global {
   interface TrustedHTML { toString(): string }
 }
 
+// Conservative backstop for the primary innerHTML sink. Input is already
+// auto-escaped by the `html` tagged template, so this never alters legitimate
+// rendering. If a future `rawHtml()` misuse pushed a literal <script> or a
+// javascript:/vbscript:/data: URL through, neutralize it (render inert) rather than throw —
+// throwing would blank the whole element (denial of rendering) on benign text
+// that merely contains "javascript:" (e.g. an error message). Event-handler
+// attributes are handled by the SVG-only `default` policy in render.ts.
 const htmlPolicy = window.trustedTypes?.createPolicy('coach-html', {
-  createHTML: (s: string) => s,
+  createHTML: (s: string) =>
+    s.replaceAll(/<(\/?script)/gi, '&lt;$1').replaceAll(/(javascript|vbscript|data):/gi, '$1&#58;'),
 });
 
 /**

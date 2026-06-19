@@ -7,6 +7,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { runtimeDebug } from './runtime-debug';
 import { Workspace } from './types';
 import { ParseContext, prefetchCache } from './parser-shared';
@@ -647,6 +648,9 @@ export async function parseAllLogsViaWorker(
         child = forkFn(workerPath, [], {
           execArgv: [`--max-old-space-size=${maxOldSpaceMb}`],
           stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+          // Neutral cwd so the worker (which shells out to sqlite3) can't inherit
+          // an attacker-controlled workspace directory for bare-name resolution.
+          cwd: os.tmpdir(),
         });
       } catch {
         runtimeDebug('parser', 'child-constructor-failed', `attempt=${attempt}`);

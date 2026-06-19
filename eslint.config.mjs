@@ -62,7 +62,7 @@ export default tseslint.config(
       "import-x/no-duplicates": "error",
 
       // unicorn (modern JS best practices)
-      "unicorn/no-array-for-each": "warn",
+      "unicorn/no-for-each": "warn",
       "unicorn/prefer-array-find": "warn",
       "unicorn/no-lonely-if": "warn",
       "unicorn/prefer-string-replace-all": "warn",

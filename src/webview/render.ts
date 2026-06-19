@@ -15,11 +15,26 @@
 import { h, render as preactRender, type VNode, type ComponentChildren } from 'preact';
 import htm from 'htm';
 
-/* Trusted Types: create a 'default' policy so Preact's internal innerHTML
- * assignments (used by dangerouslySetInnerHTML for SVG icons) pass the CSP check.
- * Only trusted compile-time SVG path data reaches this path. */
+/* Trusted Types: Preact's dangerouslySetInnerHTML (used only for the static SVG
+ * icons in svg-icons.ts) writes innerHTML internally, which the browser routes
+ * through the 'default' policy. Rather than a pass-through that would trust every
+ * sink in the webview, this policy rejects anything resembling
+ * script/event-handler/javascript: — the legitimate static SVG markup never
+ * matches, so the Trusted Types backstop stays meaningful if untrusted data ever
+ * reaches an innerHTML sink. */
+// Note `[\s/]` before the event-handler check so `<svg/onload=...>` (no space
+// before `on`) can't slip past — only static SVG icon markup legitimately
+// reaches this policy, so a strict blocklist here has no false positives.
+const UNSAFE_HTML = /<script|<\/script|javascript:|[\s/]on\w+\s*=/i;
 if (typeof window !== 'undefined' && window.trustedTypes) {
-  window.trustedTypes.createPolicy('default', { createHTML: (s: string) => s });
+  window.trustedTypes.createPolicy('default', {
+    createHTML: (s: string) => {
+      if (UNSAFE_HTML.test(s)) {
+        throw new TypeError('Blocked potentially unsafe HTML in default Trusted Types policy');
+      }
+      return s;
+    },
+  });
 }
 
 export const html = htm.bind(h);

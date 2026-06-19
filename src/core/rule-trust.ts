@@ -26,6 +26,7 @@
  */
 
 import { createHash } from 'crypto';
+import * as path from 'path';
 
 /** Minimum surface of `vscode.Memento` that we need. */
 export interface TrustMemento {
@@ -48,6 +49,18 @@ export function hashContent(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
+/**
+ * Canonical storage key for an approval. Resolves to an absolute path and
+ * case-folds on Windows so the same file cannot carry two different
+ * approvals via path-case aliases on a case-insensitive filesystem.
+ * (Content hashing remains the actual security gate; this removes key
+ * ambiguity.)
+ */
+export function canonicalApprovalKey(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
 /** Read the approval map from storage. */
 export function listApproved(store: TrustMemento): ApprovalMap {
   return { ...store.get<ApprovalMap>(STORAGE_KEY, {}) };
@@ -56,7 +69,8 @@ export function listApproved(store: TrustMemento): ApprovalMap {
 /** True iff this exact file + content has been previously approved. */
 export function isApproved(store: TrustMemento, filePath: string, content: string): boolean {
   const approvals = store.get<ApprovalMap>(STORAGE_KEY, {});
-  const entry = approvals[filePath];
+  // Legacy fallback: approvals recorded before keys were canonicalized.
+  const entry = approvals[canonicalApprovalKey(filePath)] ?? approvals[filePath];
   if (!entry) return false;
   return entry.hash === hashContent(content);
 }
@@ -64,15 +78,17 @@ export function isApproved(store: TrustMemento, filePath: string, content: strin
 /** Record approval for a file at its current content. */
 export async function approve(store: TrustMemento, filePath: string, content: string): Promise<void> {
   const approvals: ApprovalMap = { ...store.get<ApprovalMap>(STORAGE_KEY, {}) };
-  approvals[filePath] = { hash: hashContent(content), approvedAt: Date.now() };
+  approvals[canonicalApprovalKey(filePath)] = { hash: hashContent(content), approvedAt: Date.now() };
   await store.update(STORAGE_KEY, approvals);
 }
 
 /** Revoke approval for a single file. */
 export async function revoke(store: TrustMemento, filePath: string): Promise<void> {
   const approvals: ApprovalMap = { ...store.get<ApprovalMap>(STORAGE_KEY, {}) };
-  if (filePath in approvals) {
-    delete approvals[filePath];
+  // Delete the canonical key plus any legacy raw-path entry.
+  const keys = [canonicalApprovalKey(filePath), filePath].filter(k => k in approvals);
+  if (keys.length > 0) {
+    for (const k of keys) delete approvals[k];
     await store.update(STORAGE_KEY, approvals);
   }
 }

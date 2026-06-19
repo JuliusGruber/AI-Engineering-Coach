@@ -24,7 +24,8 @@ import { runDetectors, runEmitters } from '../core/detector-registry';
 import { parsePipeline, executePipeline, checkPipelineTrigger, resolveInheritance } from '../core/rule-pipeline';
 import { parseRule, serializeRule } from '../core/rule-parser';
 import { getRuleLayerInfo, getPersonalRulesDir, getProjectRulesDir } from '../core/rule-loader';
-import { getPending, approve as approveTrust, getDefaultTrustStore } from '../core/rule-trust';
+import { getPending } from '../core/rule-trust';
+import { spotlight } from '../core/spotlight';
 import { isoWeek } from '../core/helpers';
 import { FIELD_SCHEMA, METRIC_PRIMITIVES, FUNCTION_CATALOG, compileFilter, validateExpression  } from '../core/dsl/index';
 import {
@@ -176,13 +177,13 @@ function buildOccurrenceSessionSummary(session: Session): {
     workspaceName: session.workspaceName,
     requestCount: session.requestCount,
     harness: session.harness,
-    firstMessage: firstReq ? firstNonEmptyText(firstReq.messageText).substring(0, 500) : '',
+    firstMessage: firstReq ? spotlight(firstNonEmptyText(firstReq.messageText).substring(0, 500)) : '',
     firstReferencedFiles: firstReq?.referencedFiles?.slice(0, 5) || [],
     firstAgentMode: firstReq?.agentMode || '',
     firstSlashCommand: firstReq?.slashCommand || '',
     totalAiLoc: session.requests.reduce((sum, r) => sum + (r.aiCode?.reduce((s, c) => s + (c.loc || 0), 0) || 0), 0),
     modelsUsed: [...new Set(session.requests.map(r => r.modelId).filter(Boolean))].slice(0, 5),
-    messagePreviews: session.requests.slice(0, 5).map(r => firstNonEmptyText(r.messageText).substring(0, 120)),
+    messagePreviews: session.requests.slice(0, 5).map(r => spotlight(firstNonEmptyText(r.messageText).substring(0, 120))),
   };
 }
 
@@ -843,7 +844,7 @@ const rpcHandlers: TypedRpcHandlers = {
     return { source: source || '' };
   },
 
-  saveRule: async (_a, _p, params) => {
+  saveRule: (_a, _p, params) => {
     const markdown = isString(params?.markdown) ? params.markdown : '';
     const ruleIdParam = isString(params?.ruleId) ? params.ruleId : '';
     if (!markdown.trim()) return { ok: false };
@@ -858,7 +859,7 @@ const rpcHandlers: TypedRpcHandlers = {
 
     const filePath = resolveRuleFilePath(fs, path, parsed, ruleIdParam);
 
-    const { inAllowed, isPersonal } = classifyRuleWritePath(path, filePath);
+    const { inAllowed } = classifyRuleWritePath(path, filePath);
     if (!inAllowed) return { ok: false, error: 'Refusing to write outside rules directories' };
 
     try {
@@ -867,11 +868,11 @@ const rpcHandlers: TypedRpcHandlers = {
       return { ok: false, error: `Failed to write ${filePath}: ${String(err)}` };
     }
 
-    const store = getDefaultTrustStore();
-    if (store && isPersonal) {
-      try { await approveTrust(store, filePath, markdown); } catch { /* ignore */ }
-    }
-
+    // The rule is registered in-memory for the current session by
+    // createRuleFromMarkdown (setUserRule). We deliberately do NOT auto-approve
+    // it for future loads: persisting trust is left to the explicit first-use
+    // review, so editor- or LLM-generated DSL is never silently trusted across
+    // reloads (see rule-trust.ts).
     const rule = createRuleFromMarkdown(markdown);
     if (rule) rule.sourceFilePath = filePath;
     return { ok: !!rule, filePath };
@@ -945,7 +946,7 @@ const rpcHandlers: TypedRpcHandlers = {
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const vscode = require('vscode') as typeof import('vscode');
-      const { callLlm } = await import('./panel-llm');
+      const { callLlm, UNTRUSTED_DATA_GUARD } = await import('./panel-llm');
 
       const systemPrompt = `You are an expert explaining why a specific coding session triggered an AI Engineer Coach detection rule.
 You will receive the rule (in DSL form) and a summary of the session. Explain in 2-4 short sentences:
@@ -953,7 +954,9 @@ You will receive the rule (in DSL form) and a summary of the session. Explain in
 2. Which specific aspects of this session match the rule
 3. One concrete action the user can take for this specific session
 
-Be specific. Reference actual values from the session. Keep it under 80 words. No preamble.`;
+Be specific. Reference actual values from the session. Keep it under 80 words. No preamble.
+
+${UNTRUSTED_DATA_GUARD}`;
 
       const userPrompt = `Rule: ${rule.name}
 Description: ${rule.description}

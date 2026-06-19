@@ -13,6 +13,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { execFileSync, execFile } from 'child_process';
 import { Session, SessionRequest } from './types';
 import { assertTrustedPath, extractCodeBlocks, createRequest, createSession, detectDevcontainerFromRequests } from './parser-shared';
@@ -57,28 +58,35 @@ function findXcodeDbFiles(xcodeBase: string): string[] {
   return dbFiles;
 }
 
+/** Quote a string as a SQLite literal (doubling embedded quotes) so the
+ *  conversation-ID allowlist checks are defence-in-depth rather than the
+ *  only barrier against SQL injection. */
+function sqlQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+// Shared sqlite3 exec options. cwd:os.tmpdir() keeps the bare 'sqlite3' name from
+// resolving against an attacker-controlled workspace dir (binary planting, esp.
+// on Windows). Defined once so no call site can drift from the hardened config.
+const SQLITE_QUERY_OPTS = { timeout: 30000, killSignal: 'SIGKILL', maxBuffer: 50 * 1024 * 1024, cwd: os.tmpdir() } as const;
+const SQLITE_PROBE_OPTS = { timeout: 3000, cwd: os.tmpdir() } as const;
+
 function sqliteQuery(dbPath: string, sql: string): string {
   assertTrustedPath(dbPath);
   try {
-    return execFileSync('sqlite3', ['-json', dbPath, sql], {
-      encoding: 'utf-8',
-      timeout: 30000,
-      maxBuffer: 50 * 1024 * 1024,
-    });
+    return execFileSync('sqlite3', ['-json', dbPath, sql], { encoding: 'utf-8', ...SQLITE_QUERY_OPTS });
   } catch (e) {
     console.debug(`sqlite3 query failed on ${dbPath}:`, e instanceof Error ? e.message : e);
     return '';
   }
 }
 
-function sqliteQueryAsync(dbPath: string, sql: string): Promise<string> {
+/** Run a sqlite3 query off the main thread, resolving stdout (or '' on error).
+ *  assertTrustedPath lives here so no async caller can forget it. */
+function sqliteExecAsync(dbPath: string, args: string[]): Promise<string> {
+  assertTrustedPath(dbPath);
   return new Promise(resolve => {
-    execFile('sqlite3', ['-json', dbPath, sql], {
-      encoding: 'utf-8',
-      timeout: 30000,
-      killSignal: 'SIGKILL',
-      maxBuffer: 50 * 1024 * 1024,
-    }, (err, stdout) => {
+    execFile('sqlite3', args, { encoding: 'utf-8', ...SQLITE_QUERY_OPTS }, (err, stdout) => {
       if (err) {
         console.debug(`sqlite3 query failed on ${dbPath}:`, err.message);
         resolve('');
@@ -87,6 +95,10 @@ function sqliteQueryAsync(dbPath: string, sql: string): Promise<string> {
       }
     });
   });
+}
+
+function sqliteQueryAsync(dbPath: string, sql: string): Promise<string> {
+  return sqliteExecAsync(dbPath, ['-json', dbPath, sql]);
 }
 
 /** Fast Turn query that avoids sqlite3's slow -json serialization.
@@ -102,34 +114,22 @@ function sqliteQueryTurnsAsync(
   const NEWLINE_PLACEHOLDER = '\x1e';
   const sql =
     `SELECT rowID, id, role, replace(data, x'0a', x'1e'), createdAt ` +
-    `FROM Turn WHERE conversationID = '${conversationId}' ORDER BY rowID`;
-  return new Promise(resolve => {
-    execFile('sqlite3', ['-separator', UNIT_SEP, dbPath, sql], {
-      encoding: 'utf-8',
-      timeout: 30000,
-      killSignal: 'SIGKILL',
-      maxBuffer: 50 * 1024 * 1024,
-    }, (err, stdout) => {
-      if (err) {
-        console.debug(`sqlite3 turn query failed on ${dbPath}:`, err.message);
-        resolve([]);
-        return;
-      }
-      const rows: { rowID: number; id: string; role: string; data: string; createdAt: number }[] = [];
-      for (const line of stdout.split('\n')) {
-        if (!line) continue;
-        const parts = line.split(UNIT_SEP);
-        if (parts.length < 5) continue;
-        rows.push({
-          rowID: Number.parseInt(parts[0], 10),
-          id: parts[1],
-          role: parts[2],
-          data: parts[3].replaceAll(NEWLINE_PLACEHOLDER, '\n'),
-          createdAt: Number.parseFloat(parts[4]),
-        });
-      }
-      resolve(rows);
-    });
+    `FROM Turn WHERE conversationID = ${sqlQuote(conversationId)} ORDER BY rowID`;
+  return sqliteExecAsync(dbPath, ['-separator', UNIT_SEP, dbPath, sql]).then(stdout => {
+    const rows: { rowID: number; id: string; role: string; data: string; createdAt: number }[] = [];
+    for (const line of stdout.split('\n')) {
+      if (!line) continue;
+      const parts = line.split(UNIT_SEP);
+      if (parts.length < 5) continue;
+      rows.push({
+        rowID: Number.parseInt(parts[0], 10),
+        id: parts[1],
+        role: parts[2],
+        data: parts[3].replaceAll(NEWLINE_PLACEHOLDER, '\n'),
+        createdAt: Number.parseFloat(parts[4]),
+      });
+    }
+    return rows;
   });
 }
 
@@ -307,8 +307,9 @@ export function parseXcodeDatabases(xcodeBase: string): Session[] {
   const sessions: Session[] = [];
   const dbFiles = findXcodeDbFiles(xcodeBase);
 
-  // Check sqlite3 is available
-  try { execFileSync('sqlite3', ['--version'], { encoding: 'utf-8', timeout: 3000 }); }
+  // Check sqlite3 is available (neutral cwd so the bare name can't resolve
+  // against an attacker-controlled workspace dir — see the query calls above).
+  try { execFileSync('sqlite3', ['--version'], { encoding: 'utf-8', ...SQLITE_PROBE_OPTS }); }
   catch (e) {
     console.debug('sqlite3 not available, skipping Xcode parsing:', e instanceof Error ? e.message : e);
     return sessions;
@@ -332,7 +333,7 @@ export function parseXcodeDatabases(xcodeBase: string): Session[] {
       let turns: XcodeTurnRow[];
       try {
         const raw = sqliteQuery(dbPath,
-          `SELECT rowID, id, role, data, createdAt FROM Turn WHERE conversationID = '${conv.id}' ORDER BY rowID`);
+          `SELECT rowID, id, role, data, createdAt FROM Turn WHERE conversationID = ${sqlQuote(conv.id)} ORDER BY rowID`);
         if (!raw.trim()) continue;
         turns = JSON.parse(raw) as XcodeTurnRow[];
       } catch (e) {
@@ -355,8 +356,8 @@ export async function parseXcodeDatabasesAsync(xcodeBase: string): Promise<Sessi
   const sessions: Session[] = [];
   const dbFiles = findXcodeDbFiles(xcodeBase);
 
-  // Check sqlite3 is available
-  try { execFileSync('sqlite3', ['--version'], { encoding: 'utf-8', timeout: 3000 }); }
+  // Check sqlite3 is available (neutral cwd — see note on the sync variant).
+  try { execFileSync('sqlite3', ['--version'], { encoding: 'utf-8', ...SQLITE_PROBE_OPTS }); }
   catch { return sessions; }
 
   for (const dbPath of dbFiles) {

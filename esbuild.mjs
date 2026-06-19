@@ -9,6 +9,9 @@ import * as path from 'path';
 
 const isWatch = process.argv.includes('--watch');
 
+// Stamp the build time into the bundle so the UI can show which build is running.
+const define = { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) };
+
 // Bundle the extension host
 const extensionBuild = esbuild.build({
   entryPoints: ['src/extension.ts'],
@@ -19,6 +22,7 @@ const extensionBuild = esbuild.build({
   outfile: 'dist/extension.js',
   sourcemap: true,
   external: ['vscode'],
+  define,
 });
 
 // Bundle the warm-up worker (runs off the extension host thread)
@@ -125,6 +129,7 @@ if (isWatch) {
     outfile: 'dist/extension.js',
     sourcemap: true,
     external: ['vscode'],
+    define,
   });
   const ctx2 = await esbuild.context({
     entryPoints: ['src/core/warm-up-worker.ts'],

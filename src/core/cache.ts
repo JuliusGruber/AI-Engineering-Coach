@@ -95,6 +95,11 @@ const CACHE_META = path.join(CACHE_DIR, 'meta.json');
 
 const CACHE_VERSION = 11;
 
+/** Refuse to JSON.parse cache files beyond these sizes: a corrupted (or
+ *  tampered) cache must degrade to a full re-parse, not OOM the host. */
+const MAX_CACHE_FILE_BYTES = 1024 * 1024 * 1024; // 1 GiB
+const MAX_CACHE_META_BYTES = 64 * 1024 * 1024; // 64 MiB
+
 interface CacheMetaPayload {
   version: number;
   dirMetas: DirMetas;
@@ -259,8 +264,18 @@ export function findStaleDirs(
 export async function loadCacheData(): Promise<CacheData | null> {
   try {
     if (!fs.existsSync(CACHE_META) || !fs.existsSync(CACHE_FILE)) return null;
+    if (fs.statSync(CACHE_META).size > MAX_CACHE_META_BYTES) {
+      warnCore('Cache', 'Cache meta file exceeds size limit; ignoring and re-parsing');
+      return null;
+    }
     const meta = readCacheMetaPayload(JSON.parse(fs.readFileSync(CACHE_META, 'utf-8')) as unknown);
     if (!meta || meta.version !== CACHE_VERSION) return null; // old format – full re-parse
+
+    const cacheSize = (await fs.promises.stat(CACHE_FILE)).size;
+    if (cacheSize > MAX_CACHE_FILE_BYTES) {
+      warnCore('Cache', `Cache file exceeds size limit (${cacheSize} bytes); ignoring and re-parsing`);
+      return null;
+    }
 
     // Read async to avoid blocking the event loop on the 200+ MB cache file
     const rawStr = await fs.promises.readFile(CACHE_FILE, 'utf-8');
@@ -291,7 +306,10 @@ export function saveCacheData(result: ParseResult, dirMetas: DirMetas): void {
   // stripping (stripSessionsForMemory) mutates the sessions.  Defer the
   // actual file write to avoid blocking the event loop.
   try {
-    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+    // Cached transcripts can contain secrets users pasted into chats; keep the
+    // dir owner-only (best effort — file modes are a no-op on Windows).
+    try { fs.chmodSync(CACHE_DIR, 0o700); } catch { /* best effort */ }
 
     const serializable = {
       workspaces: Array.from(result.workspaces.entries()),
@@ -309,8 +327,8 @@ export function saveCacheData(result: ParseResult, dirMetas: DirMetas): void {
     // Write immediately via worker thread so the large JSON string can be
     // garbage-collected from the main heap once transferred to the worker.
     const fallbackWrite = (): void => {
-      fs.writeFile(CACHE_FILE, json, 'utf-8', () => {});
-      fs.writeFile(CACHE_META, metaJson, 'utf-8', () => {});
+      fs.writeFile(CACHE_FILE, json, { encoding: 'utf-8', mode: 0o600 }, () => {});
+      fs.writeFile(CACHE_META, metaJson, { encoding: 'utf-8', mode: 0o600 }, () => {});
     };
 
     void import('worker_threads').then(({ Worker }) => {
@@ -354,8 +372,8 @@ export function loadSidebarStats(): SidebarStats | null {
 
 export function saveSidebarStats(stats: SidebarStats): void {
   try {
-    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-    fs.writeFileSync(SIDEBAR_STATS_FILE, JSON.stringify(stats), 'utf-8');
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(SIDEBAR_STATS_FILE, JSON.stringify(stats), { encoding: 'utf-8', mode: 0o600 });
   } catch {
     // best-effort
   }

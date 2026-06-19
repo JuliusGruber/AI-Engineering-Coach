@@ -5,8 +5,7 @@
 
 /* File reconstruction and workspace metadata helpers for VS Code session parsing. */
 
-import * as fs from 'fs';
-import { assertTrustedPath, prefetchCache } from './parser-shared';
+import { assertTrustedPath, prefetchCache, readFileSafe } from './parser-shared';
 import { fileUriToPath } from './helpers';
 import { debugCore, warnCore } from './log';
 
@@ -17,7 +16,11 @@ export function readFile(fpath: string): string {
     prefetchCache.delete(fpath);
     return cached;
   }
-  return fs.readFileSync(fpath, 'utf-8');
+  // Bounded read (50 MB cap): a single session file can be huge, and this path
+  // runs synchronously on the extension-host thread for on-demand detail loads.
+  const content = readFileSafe(fpath);
+  if (content === null) throw new Error(`File unreadable or exceeds size cap: ${fpath}`);
+  return content;
 }
 
 function skipQuotedString(raw: string, start: number): number {
@@ -113,6 +116,23 @@ function isForbiddenKey(key: PathKey): boolean {
   return typeof key === 'string' && FORBIDDEN_KEYS.has(key);
 }
 
+// Bound patch keys parsed from (attacker-influenceable) JSONL: a huge numeric
+// index like {"k":[2000000000]} would make the array-grow loops below push
+// billions of nulls and OOM the host; an enormous key chain would create that
+// many nested objects. (Prototype pollution is handled separately by isForbiddenKey.)
+const MAX_PATCH_INDEX = 1_000_000;
+const MAX_PATCH_KEYS = 1024;
+
+function hasUnsafePathKeys(keys: PathKey[]): boolean {
+  if (keys.length > MAX_PATCH_KEYS) return true;
+  for (const key of keys) {
+    if (typeof key === 'number' && (!Number.isInteger(key) || key < 0 || key > MAX_PATCH_INDEX)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -138,6 +158,7 @@ function workspaceLocationFromJson(wsJsonPath: string): string | null {
 }
 
 function setAtPath(obj: JsonValue, keys: PathKey[], value: JsonValue): void {
+  if (hasUnsafePathKeys(keys)) return;
   let current = obj;
   for (let i = 0; i < keys.length - 1; i++) {
     const key = keys[i];
@@ -162,6 +183,7 @@ function setAtPath(obj: JsonValue, keys: PathKey[], value: JsonValue): void {
 }
 
 function appendAtPath(obj: JsonValue, keys: PathKey[], items: JsonValue): void {
+  if (hasUnsafePathKeys(keys)) return;
   let target: JsonValue = obj;
   for (const key of keys) {
     if (isForbiddenKey(key)) return;
@@ -189,9 +211,12 @@ export function reconstructFromJsonl(fpath: string): Record<string, unknown> | n
       prefetchCache.delete(fpath);
       raw = cached;
     } else {
-      // Read without MAX_FILE_SIZE cap — JSONL is processed line-by-line so
-      // memory pressure is bounded by the largest single line, not the file.
-      raw = fs.readFileSync(fpath, 'utf-8');
+      // Bounded read (50 MB cap): the whole file is slurped into a string and a
+      // line array here, so an oversized/crafted file would OOM the host —
+      // especially on the on-demand getSessionDetail path (main thread).
+      const safe = readFileSafe(fpath);
+      if (safe === null) return null;
+      raw = safe;
     }
     lines = raw.split('\n');
   } catch (e) {
@@ -314,7 +339,10 @@ function extractImagesFromVariables(variables: RawImageVariable[]): string[] {
 export function extractSessionImages(filePath: string, requestId: string): string[] {
   try {
     assertTrustedPath(filePath);
-    const raw = fs.readFileSync(filePath, 'utf-8');
+    // Bounded read (50 MB cap) so a huge session file can't OOM the extension
+    // host when the image gallery requests it on the main thread.
+    const raw = readFileSafe(filePath);
+    if (raw === null) return [];
 
     if (filePath.endsWith('.jsonl')) {
       return extractImagesFromJsonl(raw, requestId);

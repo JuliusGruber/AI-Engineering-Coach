@@ -10,9 +10,10 @@ import * as vscode from 'vscode';
 import { Analyzer } from './core/analyzer';
 import { findLogsDirs, parseAllLogsViaWorker } from './core/parser';
 import { getRuntimeDebugLogPath, installRuntimeDebugHooks, runtimeDebug, setOutputHook } from './core/runtime-debug';
-import { loadAllRuleLayersAsync, loadAllMetricLayersAsync, setDefaultTrustGate } from './core/rule-loader';
+import { loadAllRuleLayersAsync, loadAllMetricLayersAsync, setDefaultTrustGate, setWorkspaceTrustProvider } from './core/rule-loader';
 import {
   approve as approveTrust,
+  canonicalApprovalKey,
   createTrustGate,
   getPending,
   clearPending,
@@ -69,14 +70,21 @@ async function reviewPendingTrust(context: vscode.ExtensionContext): Promise<Set
   );
   if (action !== 'Review & Approve') return new Set();
 
+  const priorApprovals = listApproved(context.globalState);
   type PickItem = vscode.QuickPickItem & { entry: PendingEntry };
-  const items: PickItem[] = pending.map(p => ({
-    label: `$(file-code) ${path.basename(p.filePath)}`,
-    description: `${p.layer} ${p.kind}`,
-    detail: p.filePath,
-    entry: p,
-    picked: false,
-  }));
+  const items: PickItem[] = pending.map(p => {
+    const prior = priorApprovals[canonicalApprovalKey(p.filePath)];
+    const status = prior
+      ? `modified since approval on ${new Date(prior.approvedAt).toLocaleDateString()}`
+      : 'never approved';
+    return {
+      label: `$(file-code) ${path.basename(p.filePath)}`,
+      description: `${p.layer} ${p.kind} · ${status} · sha256 ${p.hash.slice(0, 12)}`,
+      detail: p.filePath,
+      entry: p,
+      picked: false,
+    };
+  });
 
   const picked = await vscode.window.showQuickPick(items, {
     canPickMany: true,
@@ -110,6 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
   const trustGate = createTrustGate(context.globalState);
   setDefaultTrustGate(trustGate);
   setDefaultTrustStore(context.globalState);
+  setWorkspaceTrustProvider(() => vscode.workspace.isTrusted);
   clearPending();
 
   const rulesPromise = loadAllRuleLayersAsync(workspaceRoot, trustGate).then(counts => {
@@ -145,6 +154,24 @@ export function activate(context: vscode.ExtensionContext) {
     DashboardPanel.current?.reload(true);
   }
 
+  // When the user grants Workspace Trust, the project layer becomes eligible:
+  // reload rule/metric layers so its files surface (still gated by TOFU approval).
+  context.subscriptions.push(
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      runtimeDebug('extension', 'workspace-trust-granted');
+      void (async () => {
+        await loadAllRuleLayersAsync(workspaceRoot, trustGate);
+        await loadAllMetricLayersAsync(workspaceRoot, trustGate);
+        try {
+          const reg = await import('./core/detector-registry');
+          reg.invalidateDetectorRegistry();
+        } catch { /* ignore */ }
+        const { DashboardPanel } = await loadPanelModule();
+        DashboardPanel.current?.reload(true);
+      })();
+    }),
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('aiEngineerCoach.open', async () => {
       runtimeDebug('extension', 'command-open');
@@ -175,18 +202,32 @@ export function activate(context: vscode.ExtensionContext) {
       runtimeDebug('extension', 'command-review-trust');
       await ready;
       if (getPending().length === 0) {
-        const approvedCount = Object.keys(listApproved(context.globalState)).length;
-        const action = await vscode.window.showInformationMessage(
-          `No pending local rule files. ${approvedCount} file(s) currently approved.`,
-          'Revoke All',
-          'Close',
-        );
-        if (action === 'Revoke All') {
-          for (const p of Object.keys(listApproved(context.globalState))) {
-            await revokeTrust(context.globalState, p);
-          }
-          void vscode.window.showInformationMessage('All approvals revoked. Reload the dashboard to re-scan.');
+        const approved = listApproved(context.globalState);
+        const paths = Object.keys(approved);
+        if (paths.length === 0) {
+          void vscode.window.showInformationMessage('No pending or approved local rule files.');
+          return;
         }
+        type RevokeItem = vscode.QuickPickItem & { filePath: string };
+        const revokeItems: RevokeItem[] = paths.map(p => ({
+          label: `$(file-code) ${path.basename(p)}`,
+          description: `approved ${new Date(approved[p].approvedAt).toLocaleDateString()} · sha256 ${approved[p].hash.slice(0, 12)}`,
+          detail: p,
+          filePath: p,
+        }));
+        const picked = await vscode.window.showQuickPick(revokeItems, {
+          canPickMany: true,
+          title: 'Revoke approval for local rule/metric files',
+          placeHolder: `${paths.length} file(s) approved. Selected files will be revoked and re-prompt on next load.`,
+          ignoreFocusOut: true,
+        });
+        if (!picked || picked.length === 0) return;
+        for (const item of picked) {
+          await revokeTrust(context.globalState, item.filePath);
+        }
+        void vscode.window.showInformationMessage(
+          `Revoked ${picked.length} approval${picked.length === 1 ? '' : 's'}. Reload the dashboard to re-scan.`,
+        );
         return;
       }
       await promptAndReload();

@@ -15,8 +15,8 @@
     "src/webview/page-workflows.ts",
     "src/webview/vibe-roles.ts"
   ],
-  "ignoreDependencies": ["@vscode/vsce", "lint-staged", "serve"],
-  "ignoreBinaries": ["tsx"],
+  "ignoreDependencies": ["lint-staged", "serve"],
+  "ignoreBinaries": ["tsx", "sqlite3"],
   "rules": {
     "exports": "off",
     "types": "off",
