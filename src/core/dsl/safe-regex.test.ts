@@ -81,6 +81,25 @@ describe('compileSafe', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it('returns null for unbounded quantifiers over nullable bodies', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    // Every inner quantifier is bounded, but the body can match the empty
+    // string, so repetition is ambiguous and backtracks super-linearly.
+    expect(compileSafe('(a?b?)*')).toBeNull();
+    expect(compileSafe('(a?b?)+')).toBeNull();
+    expect(compileSafe('(a|)+')).toBeNull();
+    expect(compileSafe('(?:x{0,5}y?)*')).toBeNull();
+  });
+
+  it('still accepts unbounded quantifiers over non-nullable bodies', () => {
+    expect(compileSafe('(abc)+')).toBeInstanceOf(RegExp);
+    expect(compileSafe('(a?b)+')).toBeInstanceOf(RegExp);
+    expect(compileSafe('(?:-x)+')).toBeInstanceOf(RegExp);
+    expect(compileSafe('(foo|bar)+')).toBeInstanceOf(RegExp);
+    expect(compileSafe('https?://\\S+')).toBeInstanceOf(RegExp);
+  });
+
   it('returns null for invalid regex syntax', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 

@@ -28,8 +28,9 @@ try {
   if (!isCacheWriteWorkerData(workerData)) {
     throw new Error('Invalid worker payload');
   }
-  fs.writeFileSync(workerData.f, workerData.json, 'utf-8');
-  fs.writeFileSync(workerData.m, workerData.metaJson, 'utf-8');
+  // Owner-only: the cache may contain secrets present in transcripts.
+  fs.writeFileSync(workerData.f, workerData.json, { encoding: 'utf-8', mode: 0o600 });
+  fs.writeFileSync(workerData.m, workerData.metaJson, { encoding: 'utf-8', mode: 0o600 });
 } catch (e) {
   console.warn('[cache-worker]', e instanceof Error ? e.message : e);
 }

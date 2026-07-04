@@ -17,12 +17,16 @@ import { Session, Workspace } from './types';
 import { warnCore } from './log';
 import { parseSessionFile } from './parser-vscode';
 import { parseCLIEventsFile } from './parser-vscode-cli';
+import { stripSingleSession } from './parser-shared';
 
 export interface ParseResult {
   workspaces: Map<string, Workspace>;
   sessions: Session[];
   editLocIndex: Map<string, Map<string, number>>;
   sessionSourceIndex: Map<string, SessionSource>;
+  /** Counts of session files / lines the parser had to skip. Surfaced as a post-load banner so a
+   *  partial parse is discoverable. Absent on cold disk-cache restores (no parse ran). */
+  parseWarnings?: { skippedFiles: number; skippedLines: number };
 }
 
 export interface SessionSource {
@@ -93,6 +97,11 @@ const CACHE_FILE = path.join(CACHE_DIR, 'parsed.json');
 const CACHE_META = path.join(CACHE_DIR, 'meta.json');
 
 const CACHE_VERSION = 9;
+
+/** Refuse to JSON.parse cache files beyond these sizes: a corrupted (or
+ *  tampered) cache must degrade to a full re-parse, not OOM the host. */
+const MAX_CACHE_FILE_BYTES = 1024 * 1024 * 1024; // 1 GiB
+const MAX_CACHE_META_BYTES = 64 * 1024 * 1024; // 64 MiB
 
 interface CacheMetaPayload {
   version: number;
@@ -258,8 +267,18 @@ export function findStaleDirs(
 export async function loadCacheData(): Promise<CacheData | null> {
   try {
     if (!fs.existsSync(CACHE_META) || !fs.existsSync(CACHE_FILE)) return null;
+    if (fs.statSync(CACHE_META).size > MAX_CACHE_META_BYTES) {
+      warnCore('Cache', 'Cache meta file exceeds size limit; ignoring and re-parsing');
+      return null;
+    }
     const meta = readCacheMetaPayload(JSON.parse(fs.readFileSync(CACHE_META, 'utf-8')) as unknown);
     if (!meta || meta.version !== CACHE_VERSION) return null; // old format – full re-parse
+
+    const cacheSize = (await fs.promises.stat(CACHE_FILE)).size;
+    if (cacheSize > MAX_CACHE_FILE_BYTES) {
+      warnCore('Cache', `Cache file exceeds size limit (${cacheSize} bytes); ignoring and re-parsing`);
+      return null;
+    }
 
     // Read async to avoid blocking the event loop on the 200+ MB cache file
     const rawStr = await fs.promises.readFile(CACHE_FILE, 'utf-8');
@@ -290,7 +309,10 @@ export function saveCacheData(result: ParseResult, dirMetas: DirMetas): void {
   // stripping (stripSessionsForMemory) mutates the sessions.  Defer the
   // actual file write to avoid blocking the event loop.
   try {
-    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+    // Cached transcripts can contain secrets users pasted into chats; keep the
+    // dir owner-only (best effort — file modes are a no-op on Windows).
+    try { fs.chmodSync(CACHE_DIR, 0o700); } catch { /* best effort */ }
 
     const serializable = {
       workspaces: Array.from(result.workspaces.entries()),
@@ -308,8 +330,8 @@ export function saveCacheData(result: ParseResult, dirMetas: DirMetas): void {
     // Write immediately via worker thread so the large JSON string can be
     // garbage-collected from the main heap once transferred to the worker.
     const fallbackWrite = (): void => {
-      fs.writeFile(CACHE_FILE, json, 'utf-8', () => {});
-      fs.writeFile(CACHE_META, metaJson, 'utf-8', () => {});
+      fs.writeFile(CACHE_FILE, json, { encoding: 'utf-8', mode: 0o600 }, () => {});
+      fs.writeFile(CACHE_META, metaJson, { encoding: 'utf-8', mode: 0o600 }, () => {});
     };
 
     void import('worker_threads').then(({ Worker }) => {
@@ -353,8 +375,8 @@ export function loadSidebarStats(): SidebarStats | null {
 
 export function saveSidebarStats(stats: SidebarStats): void {
   try {
-    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-    fs.writeFileSync(SIDEBAR_STATS_FILE, JSON.stringify(stats), 'utf-8');
+    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(SIDEBAR_STATS_FILE, JSON.stringify(stats), { encoding: 'utf-8', mode: 0o600 });
   } catch {
     // best-effort
   }
@@ -376,30 +398,21 @@ export function clearCache(): void {
 /* ---- Memory-efficient in-RAM representation ---- */
 
 /**
- * Maximum chars to keep in memory for messageText.
- * Enough for all regex-based classification (work-type, intent, spec-detection,
- * profanity scanning, prompt grading) while saving ~95% of text memory.
- */
-const MEMORY_PREVIEW_CHARS = 500;
-
-/**
  * Strip text fields from sessions to reduce in-memory footprint.
- * - messageText is truncated to MEMORY_PREVIEW_CHARS (enough for all analytics).
- * - responseText is cleared entirely (only needed for session detail view, loaded from disk on demand).
- * - todoSnapshot is dropped (only used in session detail).
+ *
+ * Delegates to stripSingleSession() (defined in parser-shared) so the same stripping rules
+ * apply whether sessions are stripped eagerly during parse (issue #106) or in bulk here.
+ *
+ * VS Code / CLI sessions are stripped eagerly during parse, so this is idempotent for them.
+ * External-harness sessions (Claude/Codex/OpenCode, Xcode) are collected after the main
+ * parse loop and are stripped here.
  *
  * Call this after saving the full data to disk cache and before handing
  * sessions to the Analyzer.
  */
 export function stripSessionsForMemory(sessions: Session[]): void {
   for (const s of sessions) {
-    for (const r of s.requests) {
-      if (r.messageText.length > MEMORY_PREVIEW_CHARS) {
-        r.messageText = r.messageText.substring(0, MEMORY_PREVIEW_CHARS);
-      }
-      r.responseText = '';
-      if (r.todoSnapshot) r.todoSnapshot = null;
-    }
+    stripSingleSession(s);
   }
 }
 

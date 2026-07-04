@@ -7,6 +7,11 @@ import * as vscode from 'vscode';
 import { loadSidebarStats } from '../core/cache';
 import { getNonce, escapeHtmlAttr } from './panel-shared';
 
+// Injected by esbuild at build time (see esbuild.mjs `define`). Falls back to ''
+// when run unbundled (tests), so the UI shows "dev build".
+declare const __BUILD_TIME__: string;
+const BUILD_TIME = typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : '';
+
 export class DashboardSidebarProvider implements vscode.WebviewViewProvider {
   public static instance: DashboardSidebarProvider | undefined;
 
@@ -42,6 +47,7 @@ export class DashboardSidebarProvider implements vscode.WebviewViewProvider {
   private renderHtml(webview: vscode.Webview): string {
     const nonce = getNonce();
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'sidebar.css'));
+    const buildLabel = BUILD_TIME ? new Date(BUILD_TIME).toLocaleString() : 'dev build';
     const stats = loadSidebarStats();
     const statsHtml = stats
       ? `
@@ -67,6 +73,7 @@ export class DashboardSidebarProvider implements vscode.WebviewViewProvider {
 <div id="content">${statsHtml}</div>
 <button id="open">Explore AI Insights</button>
 <button id="reload" class="secondary">Sync Sessions</button>
+<p class="sidebar-note">Build ${buildLabel}</p>
 <script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
   document.getElementById('open').addEventListener('click', function() {

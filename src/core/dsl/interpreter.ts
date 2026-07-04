@@ -96,7 +96,34 @@ function numOpt(arg: unknown, def: number): number {
   return arg != null ? toNum(arg) : def;
 }
 
+/** Hard ceiling on AST-node evaluations per top-level `evaluate()` call
+ *  (including pipe iterations over data rows). Real expressions stay far
+ *  below this; only a pathological rule file can hit it. The throw is caught
+ *  by the compiled-expression wrappers in dsl/index.ts, so an offending rule
+ *  degrades to no-match instead of stalling analysis. */
+const MAX_EVAL_STEPS = 5_000_000;
+/** Recursion guard: parse depth is capped at 64, but calls and pipes add frames. */
+const MAX_EVAL_DEPTH = 500;
+let evalSteps = 0;
+let evalDepth = 0;
+
 export function evaluate(node: ASTNode, ctx: Record<string, unknown>): unknown {
+  if (evalDepth === 0) evalSteps = 0;
+  if (++evalSteps > MAX_EVAL_STEPS) {
+    throw new InterpreterError(`evaluation budget exceeded (${MAX_EVAL_STEPS} steps)`);
+  }
+  if (evalDepth >= MAX_EVAL_DEPTH) {
+    throw new InterpreterError('expression nesting too deep');
+  }
+  evalDepth++;
+  try {
+    return evaluateNode(node, ctx);
+  } finally {
+    evalDepth--;
+  }
+}
+
+function evaluateNode(node: ASTNode, ctx: Record<string, unknown>): unknown {
   switch (node.type) {
     case 'number':
     case 'string':

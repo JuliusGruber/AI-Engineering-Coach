@@ -17,7 +17,7 @@
     "url": "https://github.com/microsoft/AI-Engineering-Coach/issues"
   },
   "engines": {
-    "vscode": "^1.120.0",
+    "vscode": "^1.125.0",
     "node": ">=20"
   },
   "categories": [
@@ -44,6 +44,12 @@
   "main": "./dist/extension.js",
   "bin": {
     "coach": "bin/coach"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In untrusted workspaces, project-level rules and metrics (.ai-engineer-coach/) are not loaded. Built-in and personal rules still work."
+    }
   },
   "contributes": {
     "commands": [
@@ -302,13 +308,16 @@
     "analyze:token-inventory": "npx tsx scripts/token-inventory.ts --save",
     "analyze:context-composition": "npx tsx scripts/explore-context-composition.ts",
     "analyze:e2e-real-data": "npx tsx scripts/e2e-real-data.ts",
+    "parity": "npx tsx scripts/parse-parity.ts",
     "analyze:catalog-fetch": "node scripts/test-catalog-fetch.mjs",
     "smoke-test": "node scripts/smoke-test.mjs",
+    "gen-synth-logs": "npx tsx scripts/generate-synthetic-logs.ts",
+    "test:oom-synth": "npx tsx scripts/oom-repro.ts",
     "package": "node scripts/package-readme-swap.mjs",
     "spellcheck": "cspell \"src/**/*.ts\" \"docs/**/*.md\" \"*.md\"",
     "knip": "knip",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run spellcheck && npm run knip && npm run test",
+    "check": "npm run typecheck && npm run lint && npm run spellcheck && npm run knip && npm run lockfile-lint && npm run test",
     "check-size": "node scripts/check-bundle-size.mjs",
     "test:e2e": "npx playwright test",
     "lockfile-lint": "lockfile-lint",
@@ -333,29 +342,29 @@
   "engineStrict": true,
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@playwright/test": "1.60.0",
+    "@playwright/test": "1.61.1",
     "@types/express": "4.17.25",
-    "@types/node": "25.9.1",
-    "@types/vscode": "1.120.0",
+    "@types/node": "26.0.1",
+    "@types/vscode": "1.125.0",
     "@types/ws": "8.18.1",
-    "@vitest/coverage-v8": "4.1.8",
+    "@vitest/coverage-v8": "4.1.9",
     "@vscode/vsce": "3.9.2",
     "cspell": "10.0.1",
-    "esbuild": "0.28.0",
-    "eslint": "10.4.1",
-    "eslint-plugin-import-x": "4.16.2",
+    "esbuild": "0.28.1",
+    "eslint": "10.6.0",
+    "eslint-plugin-import-x": "4.17.1",
     "eslint-plugin-no-unsanitized": "4.1.5",
-    "eslint-plugin-unicorn": "64.0.0",
+    "eslint-plugin-unicorn": "68.0.0",
     "husky": "9.1.7",
     "jsdom": "29.1.1",
-    "knip": "6.15.0",
-    "lint-staged": "17.0.7",
+    "knip": "6.23.0",
+    "lint-staged": "17.0.8",
     "lockfile-lint": "5.0.0",
     "preact-render-to-string": "6.7.0",
     "serve": "14.2.6",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.60.1",
-    "vitest": "4.1.8"
+    "typescript-eslint": "8.62.1",
+    "vitest": "4.1.9"
   },
   "dependencies": {
     "chart.js": "4.5.1",
@@ -364,7 +373,7 @@
     "htm": "3.1.1",
     "leo-profanity": "1.9.0",
     "open": "^10.1.0",
-    "preact": "10.29.2",
+    "preact": "10.29.3",
     "ws": "8.21.0",
     "zod": "4.4.3"
   },

@@ -26,6 +26,7 @@ import {
   formatContextHealth,
 } from './formatters';
 import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+import { redactSecrets } from '../core/redact-secrets';
 
 /* ---- shared helpers ---- */
 
@@ -47,7 +48,10 @@ function parsePositiveInteger(value: unknown, max?: number): number | undefined 
 }
 
 function textResult(data: unknown): vscode.LanguageModelToolResult {
-  return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(JSON.stringify(data, null, 2))]);
+  // Redact at this single egress so every formatter result is scrubbed before it
+  // reaches the model — individual formatters don't need to remember to do it.
+  const json = redactSecrets(JSON.stringify(data, null, 2));
+  return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(json)]);
 }
 
 const FILTER_SCHEMA = {

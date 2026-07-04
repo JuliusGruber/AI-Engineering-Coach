@@ -12,8 +12,8 @@
  */
 
 import { Session, SessionRequest, CompactionEvent, ModelUsage } from './types';
-import { createRequest, createSession, detectDevcontainerFromRequests } from './parser-shared';
-import { readFile } from './parser-vscode-files';
+import { createRequest, createSession, detectDevcontainerFromRequests, recordFailedFile } from './parser-shared';
+import { forEachJsonlLine, forEachJsonlLineAsync } from './parser-vscode-files';
 import { canonicalizeReasoningEffort, extractReasoningEffortFromModelId, normalizeModel } from './helpers';
 
 interface CLIEvent {
@@ -21,6 +21,13 @@ interface CLIEvent {
   data?: Record<string, unknown>;
   timestamp?: string;
   id?: string;
+}
+
+/* The desktop Copilot app and the terminal Copilot CLI both write
+ * ~/.copilot/session-state/<id>/events.jsonl. Only the app emits the
+ * remoteSteerable field on session.start, so we use it to tell them apart. */
+function harnessName(state: CLIParseState): string {
+  return state.isApp ? 'GitHub Copilot App' : 'GitHub Copilot CLI';
 }
 
 /** Accumulated state for a single user turn (user.message → next user.message). */
@@ -46,6 +53,7 @@ interface TurnState {
 
 interface CLIParseState {
   sessionId: string;
+  isApp: boolean;
   startTime: string | null;
   currentModelId: string;
   currentReasoningEffort: 'max' | 'high' | 'medium' | 'low' | null;
@@ -115,16 +123,6 @@ function parseCLIEventLine(line: string): CLIEvent | null {
   }
 }
 
-function parseCLIEvents(raw: string): CLIEvent[] {
-  const events: CLIEvent[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    const event = parseCLIEventLine(line);
-    if (event) events.push(event);
-  }
-  return events;
-}
-
 function getTurnEndState(turn: TurnState): 'errored' | undefined {
   const noResponseRecorded = turn.responseChunks.length === 0
     && turn.toolNames.size === 0
@@ -146,7 +144,7 @@ function flushTurn(state: CLIParseState): void {
     timestamp: msgTs,
     messageText: turn.userMsg,
     responseText,
-    agentName: 'GitHub Copilot CLI',
+    agentName: harnessName(state),
     agentMode: turn.agentMode || 'agent',
     modelId: turn.modelId || state.currentModelId,
     toolsUsed: [...turn.toolNames],
@@ -191,6 +189,7 @@ function countImageVariables(turn: TurnState, variables: unknown): void {
 function handleSessionStart(ev: CLIEvent, state: CLIParseState, wsId: string): void {
   const data = ev.data || {};
   state.sessionId = str(data.sessionId) || wsId;
+  state.isApp = 'remoteSteerable' in data;
   state.startTime = str(data.startTime) || ev.timestamp || null;
   state.currentModelId = str(data.selectedModel);
   state.currentReasoningEffort = canonicalizeReasoningEffort(str(data.reasoningEffort))
@@ -356,19 +355,10 @@ function handleCliEvent(ev: CLIEvent, state: CLIParseState, wsId: string): void 
   }
 }
 
-export function parseCLIEventsFile(eventsPath: string, wsId: string, wsName: string, customInstructionsBytes?: number): Session | null {
-  let raw: string;
-  try {
-    raw = readFile(eventsPath);
-  } catch {
-    return null;
-  }
-
-  const events = parseCLIEvents(raw);
-  if (events.length === 0) return null;
-
-  const state: CLIParseState = {
+function createInitialCliState(wsId: string): CLIParseState {
+  return {
     sessionId: wsId,
+    isApp: false,
     startTime: null,
     currentModelId: '',
     currentReasoningEffort: null,
@@ -377,11 +367,14 @@ export function parseCLIEventsFile(eventsPath: string, wsId: string, wsName: str
     requests: [],
     turn: null,
   };
+}
 
-  for (const ev of events) {
-    handleCliEvent(ev, state, wsId);
-  }
-
+function finalizeCliSession(
+  state: CLIParseState,
+  wsId: string,
+  wsName: string,
+  customInstructionsBytes?: number,
+): Session | null {
   flushTurn(state);
 
   if (state.requests.length === 0) return null;
@@ -392,7 +385,7 @@ export function parseCLIEventsFile(eventsPath: string, wsId: string, wsName: str
     workspaceId: wsId,
     workspaceName: wsName,
     location: 'cli',
-    harness: 'GitHub Copilot CLI',
+    harness: harnessName(state),
     creationDate: creationDate ?? undefined,
     requests: state.requests,
     modelUsage: state.modelUsage,
@@ -401,3 +394,64 @@ export function parseCLIEventsFile(eventsPath: string, wsId: string, wsName: str
     hasDevcontainer: detectDevcontainerFromRequests(state.requests),
   });
 }
+
+export function parseCLIEventsFile(eventsPath: string, wsId: string, wsName: string, customInstructionsBytes?: number): Session | null {
+  const state = createInitialCliState(wsId);
+
+  let sawAnyEvent = false;
+  try {
+    // Stream events line-by-line and handle each immediately. The Copilot CLI events.jsonl can be
+    // over 1 GB; reading it whole (or building a full events[] array) forces a single giant
+    // allocation that trips Chromium's PartitionAlloc OOM guard inside Electron (issue #106).
+    forEachJsonlLine(eventsPath, (line) => {
+      if (!line.trim()) return;
+      const event = parseCLIEventLine(line);
+      if (event) {
+        handleCliEvent(event, state, wsId);
+        sawAnyEvent = true;
+      }
+    });
+  } catch (e) {
+    recordFailedFile('parser-vscode-cli', eventsPath, e);
+    return null;
+  }
+
+  if (!sawAnyEvent) return null;
+
+  return finalizeCliSession(state, wsId, wsName, customInstructionsBytes);
+}
+
+/**
+ * Async sibling of {@link parseCLIEventsFile} for the cold-parse path. Streams the events file
+ * while yielding to the event loop and reporting byte progress, so a multi-GB events.jsonl no
+ * longer blocks the worker for minutes or freezes the host progress bar (issue #106).
+ */
+export async function parseCLIEventsFileAsync(
+  eventsPath: string,
+  wsId: string,
+  wsName: string,
+  customInstructionsBytes?: number,
+  onProgress?: (bytesRead: number, totalBytes: number) => void,
+): Promise<Session | null> {
+  const state = createInitialCliState(wsId);
+
+  let sawAnyEvent = false;
+  try {
+    await forEachJsonlLineAsync(eventsPath, (line) => {
+      if (!line.trim()) return;
+      const event = parseCLIEventLine(line);
+      if (event) {
+        handleCliEvent(event, state, wsId);
+        sawAnyEvent = true;
+      }
+    }, onProgress);
+  } catch (e) {
+    recordFailedFile('parser-vscode-cli', eventsPath, e);
+    return null;
+  }
+
+  if (!sawAnyEvent) return null;
+
+  return finalizeCliSession(state, wsId, wsName, customInstructionsBytes);
+}
+

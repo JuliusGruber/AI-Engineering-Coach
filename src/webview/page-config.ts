@@ -10,9 +10,10 @@ import { TOKEN_DATA_AVAILABLE_FROM } from '../core/constants';
 import { rpc, COLORS, Chart, trackChart, destroyCharts } from './shared';
 import { html, render, StatCard, ComponentChildren } from './render';
 import { renderContextManagement } from './page-context-mgmt';
+import { llmAvailable, LLM_UNAVAILABLE_NOTE } from './capabilities';
 
 /* Harness colors */
-const HC: Record<string, string> = { 'Local Agent': '#007acc', 'Local Agent (Insiders)': '#24bfa5', 'Xcode': '#147efb', 'Claude Code': '#d97706', 'GitHub Copilot CLI': '#8b5cf6', 'Codex CLI': '#ec4899', 'OpenCode': '#10b981' };
+const HC: Record<string, string> = { 'Local Agent': '#007acc', 'Local Agent (Insiders)': '#24bfa5', 'Xcode': '#147efb', 'Claude Code': '#d97706', 'GitHub Copilot CLI': '#8b5cf6', 'GitHub Copilot App': '#a371f7', 'Codex CLI': '#ec4899', 'OpenCode': '#10b981' };
 function hc(h: string): string { return HC[h] || COLORS.muted; }
 
 /** Active treemap chart reference + workspace data for review highlighting */
@@ -226,13 +227,13 @@ async function renderConfigQuality(container: HTMLElement, currentFilter: DateFi
           <option value="">All Harnesses</option>
           ${harnesses.map(h => html`<option value=${h} selected=${currentFilter.harness === h || undefined}>${h}</option>`)}
         </select>
-        <button id="ctxReviewBtn" style="padding:5px 14px;border-radius:6px;background:var(--accent-blue);color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer;transition:opacity 0.15s;" title="AI reviews your context files and scores them">Review Context Files</button>
-        <select id="ctxReviewCount" style="padding:4px 6px;border-radius:6px;background:var(--card-bg, #161b22);border:1px solid var(--border-color, #30363d);color:var(--text-primary, #c9d1d9);font-size:12px;" title="Number of workspaces to review">
+        <button id="ctxReviewBtn" style="padding:5px 14px;border-radius:6px;background:var(--accent-blue);color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer;transition:opacity 0.15s;${llmAvailable() ? '' : 'opacity:0.45;cursor:not-allowed;'}" disabled=${!llmAvailable() || undefined} title=${llmAvailable() ? 'AI reviews your context files and scores them' : LLM_UNAVAILABLE_NOTE}>Review Context Files</button>
+        ${llmAvailable() ? html`<select id="ctxReviewCount" style="padding:4px 6px;border-radius:6px;background:var(--card-bg, #161b22);border:1px solid var(--border-color, #30363d);color:var(--text-primary, #c9d1d9);font-size:12px;" title="Number of workspaces to review">
           <option value="3">Top 3</option>
           <option value="5" selected>Top 5</option>
           <option value="10">Top 10</option>
           <option value="15">Top 15</option>
-        </select>
+        </select>` : null}
       </div>
     </div>
     <div class="stat-grid">
@@ -340,6 +341,7 @@ const GRADE_COLORS: Record<string, string> = {
 };
 
 async function runContextReview(workspaces: WorkspaceConfigHealth[]): Promise<void> {
+  if (!llmAvailable()) return;
   const btn = document.getElementById('ctxReviewBtn') as HTMLButtonElement | null;
   const countSelect = document.getElementById('ctxReviewCount') as HTMLSelectElement | null;
   const resultsEl = document.getElementById('ctxReviewResults');

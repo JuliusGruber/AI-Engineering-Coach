@@ -38,6 +38,30 @@ function resolveGate(explicit?: TrustGate): TrustGate | undefined {
   return explicit ?? defaultTrustGate;
 }
 
+/**
+ * Whether the current workspace is trusted (VS Code Workspace Trust).
+ * Project-layer rules and metrics execute DSL sourced from the repository,
+ * so they must never load in an untrusted workspace. The extension wires
+ * this to `vscode.workspace.isTrusted`; tests and scripts (this module has
+ * no vscode dependency) default to trusted.
+ */
+let workspaceTrustProvider: () => boolean = () => true;
+export function setWorkspaceTrustProvider(provider: () => boolean): void {
+  workspaceTrustProvider = provider;
+}
+function isWorkspaceTrusted(): boolean {
+  return workspaceTrustProvider();
+}
+
+/** Hard cap on rule/metric files loaded from a single directory. */
+const MAX_FILES_PER_DIR = 200;
+
+function capFiles(files: string[], dir: string, label: string): string[] {
+  if (files.length <= MAX_FILES_PER_DIR) return files;
+  warnCore(label, `${dir} contains ${files.length} files; loading only the first ${MAX_FILES_PER_DIR}`);
+  return files.slice(0, MAX_FILES_PER_DIR);
+}
+
 /** Well-known directory name used for personal and project rule storage. */
 export const RULES_DIR_NAME = '.ai-engineer-coach/rules';
 
@@ -143,6 +167,11 @@ function loadRulesFromDir(
   } catch {
     return 0; // Directory doesn't exist yet -- that's fine
   }
+  if (layer === 'project' && !isWorkspaceTrusted()) {
+    warnCore('RuleLoader', 'Workspace is not trusted; skipping project rules');
+    return 0;
+  }
+  files = capFiles(files, dir, 'RuleLoader');
 
   let count = 0;
   for (const file of files) {
@@ -269,6 +298,11 @@ function loadMetricsFromDir(
   } catch {
     return 0;
   }
+  if (layer === 'project' && !isWorkspaceTrusted()) {
+    warnCore('MetricLoader', 'Workspace is not trusted; skipping project metrics');
+    return 0;
+  }
+  files = capFiles(files, dir, 'MetricLoader');
 
   let count = 0;
   for (const file of files) {
@@ -338,6 +372,11 @@ async function loadRulesFromDirAsync(
   } catch {
     return 0;
   }
+  if (layer === 'project' && !isWorkspaceTrusted()) {
+    warnCore('RuleLoader', 'Workspace is not trusted; skipping project rules');
+    return 0;
+  }
+  files = capFiles(files, dir, 'RuleLoader');
 
   let count = 0;
   await Promise.all(files.map(async file => {
@@ -431,6 +470,11 @@ async function loadMetricsFromDirAsync(
   } catch {
     return 0;
   }
+  if (layer === 'project' && !isWorkspaceTrusted()) {
+    warnCore('MetricLoader', 'Workspace is not trusted; skipping project metrics');
+    return 0;
+  }
+  files = capFiles(files, dir, 'MetricLoader');
 
   let count = 0;
   await Promise.all(files.map(async file => {

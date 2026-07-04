@@ -116,6 +116,13 @@ function closeGroup(
     return { safe: false, starHeight: nextStarHeight, maxStarHeight: nextMaxStarHeight };
   }
 
+  // A body that can match the empty string under an unbounded quantifier
+  // (e.g. `(a?b?)*`) is ambiguous and backtracks super-linearly even though
+  // no inner quantifier is itself unbounded.
+  if (isNullableBody(body)) {
+    return { safe: false, starHeight: nextStarHeight, maxStarHeight: nextMaxStarHeight };
+  }
+
   return { safe: true, starHeight: nextStarHeight, maxStarHeight: nextMaxStarHeight };
 }
 
@@ -247,4 +254,80 @@ function literalPrefix(branch: string): string {
     out += ch;
   }
   return out;
+}
+
+/* ---- Nullable-body detection ---- */
+
+/**
+ * Whether a group body can match the empty string. Used by `closeGroup`:
+ * an unbounded quantifier over a nullable body (e.g. `(a?b?)*`) creates
+ * ambiguity that backtracks super-linearly. Conservative: returns true when
+ * ANY top-level branch is nullable, and treats lookaround groups (which are
+ * zero-width, so quantifying them is always degenerate) as nullable.
+ */
+function isNullableBody(body: string): boolean {
+  let b = body;
+  if (b.startsWith('?:')) {
+    b = b.slice(2);
+  } else if (b.startsWith('?<') && !b.startsWith('?<=') && !b.startsWith('?<!')) {
+    const close = b.indexOf('>');
+    if (close === -1) return true;
+    b = b.slice(close + 1);
+  } else if (b.startsWith('?')) {
+    return true;
+  }
+  return splitTopLevelBranches(b).some(isNullableBranch);
+}
+
+/** Whether every atom in the branch is optional (or the branch is empty). */
+function isNullableBranch(branch: string): boolean {
+  let i = 0;
+  while (i < branch.length) {
+    const ch = branch[i];
+    if (ch === '^' || ch === '$') { i++; continue; } // zero-width anchors
+    let atomEnd = i;
+    let atomNullable = false;
+    if (ch === '\\') {
+      atomEnd = i + 1;
+    } else if (ch === '[') {
+      atomEnd = skipCharacterClass(branch, i);
+    } else if (ch === '(') {
+      atomEnd = findGroupEnd(branch, i);
+      atomNullable = isNullableBody(branch.slice(i + 1, atomEnd));
+    }
+    let next = atomEnd + 1;
+    const q = branch[next];
+    if (q === '?' || q === '*') {
+      atomNullable = true;
+      next++;
+    } else if (q === '+') {
+      next++;
+    } else if (q === '{') {
+      const m = /^\{(\d+),?\d*\}/.exec(branch.slice(next));
+      if (m) {
+        if (m[1] === '0') atomNullable = true;
+        next += m[0].length;
+      }
+    }
+    if (branch[next] === '?') next++; // lazy-quantifier modifier
+    if (!atomNullable) return false;
+    i = next;
+  }
+  return true;
+}
+
+/** Index of the `)` closing the group that opens at `start`. */
+function findGroupEnd(s: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\\') { i++; continue; }
+    if (ch === '[') { i = skipCharacterClass(s, i); continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return s.length;
 }

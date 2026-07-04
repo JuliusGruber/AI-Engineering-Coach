@@ -26,6 +26,9 @@ export default tseslint.config(
       unicorn,
     },
     rules: {
+      'max-lines': ['warn', { max: 400, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': ['warn', { max: 50, skipBlankLines: true, skipComments: true, IIFEs: true }],
+      'max-params': ['warn', 4],
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
@@ -62,7 +65,7 @@ export default tseslint.config(
       "import-x/no-duplicates": "error",
 
       // unicorn (modern JS best practices)
-      "unicorn/no-array-for-each": "warn",
+      "unicorn/no-for-each": "warn",
       "unicorn/prefer-array-find": "warn",
       "unicorn/no-lonely-if": "warn",
       "unicorn/prefer-string-replace-all": "warn",

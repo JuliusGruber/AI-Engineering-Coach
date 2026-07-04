@@ -51,7 +51,9 @@ describe('rule-trust', () => {
     const store = makeFakeMemento();
     await approve(store, '/a/b.md', 'hello');
     expect(isApproved(store, '/a/b.md', 'hello')).toBe(true);
-    expect(Object.keys(listApproved(store))).toEqual(['/a/b.md']);
+    // Keys are canonicalized (absolute, case-folded on Windows), so assert
+    // via count + the isApproved round-trip rather than the raw key.
+    expect(Object.keys(listApproved(store))).toHaveLength(1);
   });
 
   it('invalidates approval when content changes (hash mismatch)', async () => {

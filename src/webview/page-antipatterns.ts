@@ -13,6 +13,7 @@ import { consumeNavHint } from './app';
 import { renderCoverageHeatmap } from './page-antipatterns-heatmap';
 import { openRuleEditor, wireRuleEditorModal } from './page-antipatterns-editor';
 import { renderDslReferenceContent } from './page-dsl-reference';
+import { llmAvailable } from './capabilities';
 
 /* ── Interfaces ── */
 
@@ -883,7 +884,7 @@ function renderSessionOccurrences(
           <span class="occ-session-ws">${truncWs}</span>
           <span class="occ-session-date">${dateStr} ${timeStr}</span>
           <span class="occ-session-count">${info.count}x</span>
-          <button class="occ-explain-btn" data-rule-id=${p.id} data-session-id=${sid} title="Ask AI why this session triggered the rule">Why?</button>
+          ${llmAvailable() ? html`<button class="occ-explain-btn" data-rule-id=${p.id} data-session-id=${sid} title="Ask AI why this session triggered the rule">Why?</button>` : null}
         </div>
         ${info.messages.length > 0 ? html`<div class="occ-msg-preview">${info.messages.map(m => html`<span>${m.length > 80 ? m.substring(0, 78) + '...' : m}</span>`)}</div>` : null}
         <div class="occ-explain-result" data-session-id=${sid} style="display:none;"></div>
