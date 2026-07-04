@@ -21,9 +21,17 @@ afterEach(() => {
 });
 
 describe('LanguageModelChatMessage', () => {
-  it('User and Assistant produce role-tagged messages', () => {
-    expect(vscode.LanguageModelChatMessage.User('hi')).toEqual({ role: 'user', content: 'hi' });
-    expect(vscode.LanguageModelChatMessage.Assistant('ok')).toEqual({ role: 'assistant', content: 'ok' });
+  it('User and Assistant produce role-tagged messages whose content is a LanguageModelTextPart array', () => {
+    // VS Code semantics (relied on by panel-llm.ts redactMessages, upstream d00f84b): content is an
+    // array of parts, each a LanguageModelTextPart — NOT a bare string.
+    expect(vscode.LanguageModelChatMessage.User('hi')).toEqual({ role: 'user', content: [{ value: 'hi' }] });
+    expect(vscode.LanguageModelChatMessage.Assistant('ok')).toEqual({ role: 'assistant', content: [{ value: 'ok' }] });
+  });
+
+  it('content parts are real LanguageModelTextPart instances so `part instanceof vscode.LanguageModelTextPart` holds (regression: redactMessages)', () => {
+    const [part] = vscode.LanguageModelChatMessage.User('hi').content;
+    expect(part).toBeInstanceOf(vscode.LanguageModelTextPart);
+    expect(part.value).toBe('hi');
   });
 });
 
@@ -85,7 +93,9 @@ describe('callLlmJson OpenAI strict-mode self-heal through the stub lm (grilling
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await callLlmJson<{ items: unknown[] }>(
-      [{ role: 'user', content: 'review' } as never],
+      // A proper chat message (parts-array content) so redactMessages() can .map() it; a raw
+      // { content: 'review' } string would throw now that panel-llm redacts each text part.
+      [vscode.LanguageModelChatMessage.User('review')] as never,
       SCHEMA_CONTEXT_REVIEW,
     );
     expect(result).toEqual({ items: [] });

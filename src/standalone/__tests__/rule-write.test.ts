@@ -83,11 +83,15 @@ describe('saveRule (registry write via Node fs)', () => {
     expect(fs.readFileSync(result.filePath, 'utf8')).toBe(VALID_RULE_MD);
   });
 
-  it('does not throw on the trust step when no default trust store is set (standalone)', async () => {
+  it('does no trust-store I/O in standalone, so it cannot throw when none is set', async () => {
     tmpHome();
     const handler = getRpcHandler('saveRule');
-    // getDefaultTrustStore() is undefined in standalone → approveTrust is skipped, no throw.
-    await expect(handler!(undefined as never, undefined as never, { markdown: VALID_RULE_MD })).resolves.toMatchObject({ ok: true });
+    // Upstream 81d8eb2 removed saveRule's inline getDefaultTrustStore()/approveTrust step (trust is
+    // now the explicit first-use reviewLocalRules review), making saveRule a synchronous fs write
+    // that never touches a trust store — so a missing standalone store can't make it throw. `await`
+    // tolerates the now-plain-object (non-Promise) return.
+    const result = await handler!(undefined as never, undefined as never, { markdown: VALID_RULE_MD });
+    expect(result).toMatchObject({ ok: true });
   });
 
   it('returns { ok:false } for empty markdown (no write)', async () => {

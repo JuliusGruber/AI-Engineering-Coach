@@ -96,10 +96,37 @@ export const authentication = {
 // --- vscode.lm surface (bucket D) ----------------------------------------------
 // See docs-fork/superpowers/spec/2026-05-27-standalone-parity-bucket-d-design.md § A.
 
-export const LanguageModelChatMessage = {
-  User: (content: string): ProviderMessage => ({ role: 'user', content }),
-  Assistant: (content: string): ProviderMessage => ({ role: 'assistant', content }),
-};
+// LanguageModelTextPart — mirrors vscode.LanguageModelTextPart. panel-llm.ts's redactMessages()
+// (upstream LLM-egress hardening, d00f84b) both constructs `new vscode.LanguageModelTextPart(...)`
+// and does `part instanceof vscode.LanguageModelTextPart`; without this class each throws and every
+// callLlm() dies before reaching the provider. `.value` carries the (post-redaction) text.
+export class LanguageModelTextPart {
+  constructor(public readonly value: string) {}
+}
+
+// LanguageModelChatMessage — VS Code models `.content` as an ARRAY of parts (a LanguageModelTextPart
+// here), not a bare string; redactMessages() relies on that (it `.map()`s content, then rebuilds via
+// `new LanguageModelChatMessage(role, parts, name)`). The User/Assistant factories wrap a string in
+// one text part; sendRequest() flattens the parts back into the single string the provider layer
+// (llm-provider.ts ProviderMessage) consumes.
+export class LanguageModelChatMessage {
+  constructor(
+    public role: 'user' | 'assistant',
+    public content: LanguageModelTextPart[],
+    public name?: string,
+  ) {}
+  static User(content: string): LanguageModelChatMessage {
+    return new LanguageModelChatMessage('user', [new LanguageModelTextPart(content)]);
+  }
+  static Assistant(content: string): LanguageModelChatMessage {
+    return new LanguageModelChatMessage('assistant', [new LanguageModelTextPart(content)]);
+  }
+}
+
+// Flatten a chat message's text parts into the single string the provider payload carries.
+function toProviderMessages(messages: LanguageModelChatMessage[]): ProviderMessage[] {
+  return messages.map((m) => ({ role: m.role, content: m.content.map((p) => p.value).join('') }));
+}
 
 export class CancellationError extends Error {
   constructor() {
@@ -139,7 +166,7 @@ export class CancellationTokenSource {
 
 interface StubModel {
   sendRequest(
-    messages: ProviderMessage[],
+    messages: LanguageModelChatMessage[],
     options?: { modelOptions?: Record<string, unknown> },
     token?: { onCancellationRequested(cb: () => void): CancellationListener },
   ): { text: AsyncIterable<string> };
@@ -153,7 +180,7 @@ function makeModel(provider: NonNullable<ReturnType<typeof detectProvider>>): St
       token?.onCancellationRequested(() => controller.abort());
       const opts: SendOptions = { modelOptions: options?.modelOptions };
       // provider.send is a lazy async generator: the fetch fires on first iteration.
-      return { text: provider.send(messages, opts, controller.signal) };
+      return { text: provider.send(toProviderMessages(messages), opts, controller.signal) };
     },
   };
 }
@@ -169,4 +196,4 @@ export const lm = {
   },
 };
 
-export default { Uri, lm, workspace, window, env, commands, authentication, LanguageModelChatMessage, CancellationTokenSource, CancellationError };
+export default { Uri, lm, workspace, window, env, commands, authentication, LanguageModelChatMessage, LanguageModelTextPart, CancellationTokenSource, CancellationError };
