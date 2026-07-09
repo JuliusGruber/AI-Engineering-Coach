@@ -12,7 +12,13 @@ docs/security-audit.md
 test-results/.last-run.json
 README.github.md
 PROPOSED_FIXES.md
+docs/proposals/
 local/
 test_output.txt
 scripts/verify-counts.ts
+scripts/.parity-out/
+scripts/.parity-tmp-entry.ts
 marketing/
+
+# Playwright test results
+test-results/

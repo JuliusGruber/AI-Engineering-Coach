@@ -49,7 +49,7 @@ interface RequestBilling {
  *  because the real numbers will arrive when the session shuts down — the
  *  per-request output we have so far is just a placeholder. */
 function harnessUsesSessionAggregated(harness: string | undefined): boolean {
-  return harness === 'GitHub Copilot CLI' || harness === 'Codex';
+  return harness === 'GitHub Copilot CLI' || harness === 'GitHub Copilot App' || harness === 'Codex';
 }
 function computeBilling(sessions: Session[]): Map<SessionRequest, RequestBilling> {
   const map = new Map<SessionRequest, RequestBilling>();
