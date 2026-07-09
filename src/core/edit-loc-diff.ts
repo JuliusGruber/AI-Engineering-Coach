@@ -67,6 +67,34 @@ export interface EditLoc {
 export type EditLocIndex = Map<string, Map<string, EditLoc>>;
 
 const NEWLINE = 10;
+const MAX_INCREMENTAL_SPAN_LINES = 512;
+
+interface LineState {
+  content: string;
+  lineStarts: number[];
+  hashes: number[];
+}
+
+interface ResolvedEditRange {
+  start: number;
+  end: number;
+  startLineIndex: number;
+  endLineIndex: number;
+}
+
+interface IncrementalEditResult {
+  nextState: LineState;
+  diff: EditLoc;
+}
+
+interface LineStartSplice {
+  nextContent: string;
+  startLineIndex: number;
+  endLineIndex: number;
+  regionStart: number;
+  newRegionEnd: number;
+  delta: number;
+}
 
 /** djb2 (xor variant) hash of a line slice, computed without allocating a substring. */
 function hashLineSlice(text: string, start: number, end: number): number {
@@ -92,6 +120,21 @@ function forEachLineHash(text: string, cb: (h: number) => void): void {
     }
   }
   if (segStart < text.length) cb(hashLineSlice(text, segStart, text.length));
+}
+
+function buildLineState(content: string): LineState {
+  const lineStarts: number[] = [0];
+  const hashes: number[] = [];
+  let segStart = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === NEWLINE) {
+      hashes.push(hashLineSlice(content, segStart, i));
+      lineStarts.push(i + 1);
+      segStart = i + 1;
+    }
+  }
+  if (segStart < content.length) hashes.push(hashLineSlice(content, segStart, content.length));
+  return { content, lineStarts, hashes };
 }
 
 /** Logical line count: newlines plus a final line when the text does not end in a newline. '' -> 0. */
@@ -131,20 +174,125 @@ export function countAddedLines(prev: string, next: string): number {
  * treated as an unordered multiset, so reordering counts as neither. Linear in both inputs.
  */
 export function countAddedRemoved(prev: string, next: string): EditLoc {
+  return countAddedRemovedHashes(buildLineState(prev).hashes, buildLineState(next).hashes);
+}
+
+function countAddedRemovedHashes(prevHashes: readonly number[], nextHashes: readonly number[]): EditLoc {
   const counts = new Map<number, number>();
-  forEachLineHash(prev, h => counts.set(h, (counts.get(h) ?? 0) + 1));
+  for (const h of prevHashes) counts.set(h, (counts.get(h) ?? 0) + 1);
   let added = 0;
-  forEachLineHash(next, h => {
+  for (const h of nextHashes) {
     const c = counts.get(h);
     if (c && c > 0) {
       counts.set(h, c - 1);
     } else {
       added++;
     }
-  });
+  }
   let removed = 0;
   for (const c of counts.values()) if (c > 0) removed += c;
   return { added, removed };
+}
+
+function hashLineSegment(text: string, start: number, end: number): number[] {
+  const hashes: number[] = [];
+  let segStart = start;
+  for (let i = start; i < end; i++) {
+    if (text.charCodeAt(i) === NEWLINE) {
+      hashes.push(hashLineSlice(text, segStart, i));
+      segStart = i + 1;
+    }
+  }
+  if (segStart < end) hashes.push(hashLineSlice(text, segStart, end));
+  return hashes;
+}
+
+function maxColumnForLine(state: LineState, lineIndex: number): number {
+  const lineStart = state.lineStarts[lineIndex];
+  if (lineStart === undefined) return 0;
+  const nextLineStart = state.lineStarts[lineIndex + 1];
+  if (nextLineStart !== undefined) return nextLineStart - lineStart;
+  return state.content.length - lineStart + 1;
+}
+
+function resolveBoundedRange(state: LineState, range: RangeLike | undefined): ResolvedEditRange | undefined {
+  if (!range || typeof range.startLineNumber !== 'number') return undefined;
+  const startLineIndex = (range.startLineNumber | 0) - 1;
+  const endLineIndex = ((range.endLineNumber ?? range.startLineNumber) | 0) - 1;
+  const startColumn = range.startColumn ?? 1;
+  const endColumn = range.endColumn ?? range.startColumn ?? 1;
+  if (startLineIndex < 0 || endLineIndex < 0) return undefined;
+  if (startLineIndex >= state.lineStarts.length || endLineIndex >= state.lineStarts.length) return undefined;
+  if (startColumn < 1 || endColumn < 1) return undefined;
+  if (startColumn > maxColumnForLine(state, startLineIndex)) return undefined;
+  if (endColumn > maxColumnForLine(state, endLineIndex)) return undefined;
+  if (endLineIndex - startLineIndex > MAX_INCREMENTAL_SPAN_LINES) return undefined;
+
+  const startLineStart = state.lineStarts[startLineIndex];
+  const endLineStart = state.lineStarts[endLineIndex];
+  if (startLineStart === undefined || endLineStart === undefined) return undefined;
+  const start = startLineStart + startColumn - 1;
+  const end = endLineStart + endColumn - 1;
+  if (end < start) return undefined;
+  return { start, end, startLineIndex, endLineIndex };
+}
+
+function lineBoundaryAfter(state: LineState, lineIndex: number): number {
+  return state.lineStarts[lineIndex + 1] ?? state.content.length;
+}
+
+function spliceLineStarts(prevLineStarts: readonly number[], splice: LineStartSplice): number[] {
+  const nextLineStarts = prevLineStarts.slice(0, splice.startLineIndex + 1);
+  for (let i = splice.regionStart; i < splice.newRegionEnd; i++) {
+    if (splice.nextContent.charCodeAt(i) === NEWLINE) nextLineStarts.push(i + 1);
+  }
+  let lastLineStart = nextLineStarts[nextLineStarts.length - 1] ?? 0;
+  for (let i = splice.endLineIndex + 1; i < prevLineStarts.length; i++) {
+    const prevLineStart = prevLineStarts[i];
+    if (prevLineStart === undefined) continue;
+    const shifted = prevLineStart + splice.delta;
+    if (shifted > lastLineStart) {
+      nextLineStarts.push(shifted);
+      lastLineStart = shifted;
+    }
+  }
+  return nextLineStarts;
+}
+
+function tryApplyIncrementalEdit(prevState: LineState, edits: TextEditLike[] | undefined): IncrementalEditResult | undefined {
+  if (!edits || edits.length !== 1) return undefined;
+  const edit = edits[0];
+  if (!edit) return undefined;
+  const resolved = resolveBoundedRange(prevState, edit.range);
+  if (!resolved) return undefined;
+
+  const text = edit.text ?? '';
+  const oldRegionStart = prevState.lineStarts[resolved.startLineIndex];
+  if (oldRegionStart === undefined) return undefined;
+  const oldRegionEnd = lineBoundaryAfter(prevState, resolved.endLineIndex);
+  const delta = text.length - (resolved.end - resolved.start);
+  const nextContent = prevState.content.slice(0, resolved.start) + text + prevState.content.slice(resolved.end);
+  const newRegionEnd = oldRegionEnd + delta;
+  const nextLineStarts = spliceLineStarts(prevState.lineStarts, {
+    nextContent,
+    startLineIndex: resolved.startLineIndex,
+    endLineIndex: resolved.endLineIndex,
+    regionStart: oldRegionStart,
+    newRegionEnd,
+    delta,
+  });
+
+  const oldStartHashIndex = Math.min(resolved.startLineIndex, prevState.hashes.length);
+  const oldEndHashIndex = Math.min(resolved.endLineIndex + 1, prevState.hashes.length);
+  const oldRegionHashes = prevState.hashes.slice(oldStartHashIndex, oldEndHashIndex);
+  const newRegionHashes = hashLineSegment(nextContent, oldRegionStart, newRegionEnd);
+  const nextHashes = prevState.hashes.slice();
+  nextHashes.splice(oldStartHashIndex, oldEndHashIndex - oldStartHashIndex, ...newRegionHashes);
+
+  return {
+    nextState: { content: nextContent, lineStarts: nextLineStarts, hashes: nextHashes },
+    diff: countAddedRemovedHashes(oldRegionHashes, newRegionHashes),
+  };
 }
 
 /**
@@ -155,10 +303,12 @@ export function countAddedRemoved(prev: string, next: string): EditLoc {
 export function applyTextEdits(content: string, edits: TextEditLike[] | undefined): string {
   if (!edits || edits.length === 0) return content;
 
-  const lineStart: number[] = [0];
-  for (let i = 0; i < content.length; i++) {
-    if (content.charCodeAt(i) === NEWLINE) lineStart.push(i + 1);
-  }
+  return applyTextEditsWithLineStarts(content, edits, buildLineState(content).lineStarts);
+}
+
+function applyTextEditsWithLineStarts(content: string, edits: TextEditLike[], lineStart: readonly number[]): string {
+  if (edits.length === 0) return content;
+
   const offsetOf = (line: number, col: number): number => {
     const li = (line | 0) - 1;
     if (li >= lineStart.length) return content.length;
@@ -265,22 +415,27 @@ function accumulateFileOps(
   resolveInitialContent?: InitialContentResolver,
 ): void {
   fileOps.sort((a, b) => (a.epoch ?? 0) - (b.epoch ?? 0));
-  let prev: string | undefined;
+  let prevState: LineState | undefined;
   let lastReqId: string | undefined;
   for (const op of fileOps) {
     const reqId = op.requestId!;
     if (reqId !== lastReqId) {
-      prev = seedPrev(prev, uri, reqId, baselineByKey, resolveInitialContent);
+      const seeded = seedPrev(prevState?.content, uri, reqId, baselineByKey, resolveInitialContent);
+      if (seeded !== prevState?.content) prevState = buildLineState(seeded);
       lastReqId = reqId;
     }
-    const next = applyTextEdits(prev!, op.edits);
-    if (prev === '') {
-      addLoc(editLocIndex, reqId, uri, countLines(next), 0);
+    prevState ??= buildLineState('');
+    const incremental = tryApplyIncrementalEdit(prevState, op.edits);
+    if (incremental) {
+      addLoc(editLocIndex, reqId, uri, incremental.diff.added, incremental.diff.removed);
+      prevState = incremental.nextState;
     } else {
-      const { added, removed } = countAddedRemoved(prev!, next);
+      const next = applyTextEditsWithLineStarts(prevState.content, op.edits ?? [], prevState.lineStarts);
+      const nextState = buildLineState(next);
+      const { added, removed } = countAddedRemovedHashes(prevState.hashes, nextState.hashes);
       addLoc(editLocIndex, reqId, uri, added, removed);
+      prevState = nextState;
     }
-    prev = next;
   }
 }
 

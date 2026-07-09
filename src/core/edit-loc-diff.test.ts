@@ -477,6 +477,101 @@ describe('accumulateEditLoc', () => {
     expect(totalRemovedFor(index, URI)).toBe(2);
   });
 
+  it('counts a mid-line newline insertion without changing surrounding lines', () => {
+    const prev = 'one\ntwo three\nfour';
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', prev)],
+      operations: [
+        uriOp(URI, 'r1', 1, [
+          { range: { startLineNumber: 2, startColumn: 4, endLineNumber: 2, endColumn: 4 }, text: '\nTWO' },
+        ]),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+    expect(totalFor(index, URI)).toBe(2);
+    expect(totalRemovedFor(index, URI)).toBe(1);
+  });
+
+  it('counts a multi-line ranged edit that merges line prefixes and suffixes', () => {
+    const prev = 'a\nprefix-middle\nsuffix-tail\nz';
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', prev)],
+      operations: [
+        uriOp(URI, 'r1', 1, [
+          { range: { startLineNumber: 2, startColumn: 7, endLineNumber: 3, endColumn: 7 }, text: '' },
+        ]),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+    expect(totalFor(index, URI)).toBe(1);
+    expect(totalRemovedFor(index, URI)).toBe(2);
+  });
+
+  it('does not count a trailing newline toggle as a new logical line', () => {
+    const prev = 'a\nb';
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', prev)],
+      operations: [
+        uriOp(URI, 'r1', 1, [
+          { range: { startLineNumber: 2, startColumn: 2, endLineNumber: 2, endColumn: 2 }, text: '\n' },
+        ]),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+    expect(index.size).toBe(0);
+  });
+
+  it('preserves CRLF hashing behavior for ranged edits', () => {
+    const prev = 'a\r\nb';
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', prev)],
+      operations: [
+        uriOp(URI, 'r1', 1, [
+          { range: { startLineNumber: 2, startColumn: 1, endLineNumber: 2, endColumn: 2 }, text: 'B' },
+        ]),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+    expect(totalFor(index, URI)).toBe(1);
+    expect(totalRemovedFor(index, URI)).toBe(1);
+  });
+
+  it('falls back for a multi-edit operation while preserving LOC output', () => {
+    const prev = 'a\nb\nc';
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', prev)],
+      operations: [
+        uriOp(URI, 'r1', 1, [
+          { range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 2 }, text: 'A' },
+          { range: { startLineNumber: 3, startColumn: 1, endLineNumber: 3, endColumn: 2 }, text: 'C' },
+        ]),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+    expect(totalFor(index, URI)).toBe(2);
+    expect(totalRemovedFor(index, URI)).toBe(2);
+  });
+
+  it('falls back for column overshoot while preserving clamped edit behavior', () => {
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', 'abc')],
+      operations: [
+        uriOp(URI, 'r1', 1, [
+          { range: { startLineNumber: 1, startColumn: 99, endLineNumber: 1, endColumn: 99 }, text: 'X' },
+        ]),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+    expect(totalFor(index, URI)).toBe(1);
+    expect(totalRemovedFor(index, URI)).toBe(1);
+  });
+
   it('carries removed state across requests when a later request has no baseline', () => {
     const v1 = 'a\nb\nc\nd';
     const v2 = 'a\nb'; // r2 (no baseline) must diff against r1's reconstructed state
