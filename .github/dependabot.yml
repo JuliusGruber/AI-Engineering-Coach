@@ -11,11 +11,6 @@ updates:
       update-types:
       - minor
       - patch
-  ignore:
-  # Remove this hold when typescript-eslint supports TypeScript 7.
-  - dependency-name: typescript
-    update-types:
-    - version-update:semver-major
   open-pull-requests-limit: 10
   package-ecosystem: npm
   schedule:
