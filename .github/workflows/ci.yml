@@ -23,11 +23,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies through enterprise proxy
+      - name: Install dependencies
         run: npm ci
-        env:
-          npm_config_registry: https://packagefeedproxy.microsoft.io/npm/
-          npm_config_replace_registry_host: npmjs
 
       - name: Check (typecheck + lint + spellcheck + knip + test)
         run: npm run check
