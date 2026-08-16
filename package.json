@@ -348,7 +348,7 @@
     "lockfile-lint": "5.0.0",
     "preact-render-to-string": "6.7.0",
     "serve": "14.2.6",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "typescript-eslint": "8.66.0",
     "vitest": "4.1.10"
   },
@@ -359,5 +359,8 @@
     "leo-profanity": "1.9.0",
     "preact": "10.29.8",
     "zod": "4.4.3"
+  },
+  "overrides": {
+    "smol-toml": "1.7.1"
   }
 }
