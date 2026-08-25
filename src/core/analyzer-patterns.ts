@@ -6,7 +6,7 @@
 /* Recommendations + anti-pattern detection analytics */
 
 import { Session, SessionRequest, DateFilter, RecommendationResult, AntiPatternData, PracticeGroup, GroupScore, ProjectOverviewData, ProjectOverviewItem } from './types';
-import { toDateStr, normalizeModel, modelMultiplier } from './helpers';
+import { toDateStr, normalizeModel, modelMultiplier, extToLang } from './helpers';
 import { LONG_SESSION_REQS } from './constants';
 import { AnalyzerBase } from './analyzer-base';
 import {
@@ -16,21 +16,6 @@ import { getDetectorGroupCounts, runDetectors } from './detector-registry';
 
 function scoreToStatus(score: number): 'good' | 'needs-improvement' | 'critical' {
   return score >= 70 ? 'good' : score >= 40 ? 'needs-improvement' : 'critical';
-}
-
-const EXT_LANG_MAP: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-  py: 'python', rb: 'ruby', rs: 'rust', go: 'go', java: 'java',
-  cs: 'c#', cpp: 'c++', c: 'c', h: 'c', hpp: 'c++', swift: 'swift',
-  kt: 'kotlin', scala: 'scala', php: 'php', dart: 'dart', lua: 'lua',
-  r: 'r', sql: 'sql', sh: 'shell', bash: 'shell', zsh: 'shell',
-  html: 'html', css: 'css', scss: 'scss', vue: 'vue', svelte: 'svelte',
-  md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
-  tf: 'terraform', bicep: 'bicep', dockerfile: 'docker',
-};
-
-function extToLang(ext: string): string | null {
-  return EXT_LANG_MAP[ext] || null;
 }
 
 export class PatternsAnalyzer extends AnalyzerBase {

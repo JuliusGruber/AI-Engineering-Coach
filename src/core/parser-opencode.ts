@@ -17,10 +17,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { DatabaseSync } from 'node:sqlite';
 import { Session, SessionRequest } from './types';
 import { assertTrustedPath, createRequest, createSession, detectDevcontainerFromRequests } from './parser-shared';
 import { canonicalizeReasoningEffort, extractReasoningEffortFromModelId } from './helpers';
+import { warnCore } from './log';
 import { EditLocIndex } from './edit-loc-diff';
 import {
   addFileEditLoc,
@@ -97,6 +97,36 @@ interface OpenCodeAssistantData {
 const WRITE_TOOLS = new Set(['write', 'edit', 'create', 'patch', 'apply_patch']);
 const READ_TOOLS = new Set(['read', 'glob', 'grep', 'ls', 'find']);
 
+/** The subset of `node:sqlite` this parser uses, so the module stays optional at build time. */
+interface SqliteDatabase {
+  prepare(sql: string): { all(): unknown[] };
+  close(): void;
+}
+
+interface SqliteModule {
+  DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => SqliteDatabase;
+}
+
+let sqliteModule: SqliteModule | null | undefined;
+
+/**
+ * `node:sqlite` only exists on Node >= 22.5 (unflagged from 22.13) and is absent from some
+ * Electron builds. It is loaded lazily so an unavailable module degrades to "no OpenCode
+ * database support" instead of throwing while the parser bundle is being loaded, which would
+ * take down every harness.
+ */
+function loadSqlite(): SqliteModule | null {
+  if (sqliteModule !== undefined) return sqliteModule;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    sqliteModule = require('node:sqlite') as SqliteModule;
+  } catch (e) {
+    sqliteModule = null;
+    warnCore('parser-opencode', 'node:sqlite unavailable; skipping OpenCode database sources', e);
+  }
+  return sqliteModule;
+}
+
 export function findOpenCodeDirs(): string[] {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   const bases = new Set<string>();
@@ -117,7 +147,7 @@ export function findOpenCodeDirs(): string[] {
     } catch {
       // Missing data roots are expected for users who have not run OpenCode.
     }
-    if (databases.length > 0) {
+    if (databases.length > 0 && loadSqlite()) {
       sources.push(...databases);
       continue;
     }
@@ -411,7 +441,7 @@ function parseLegacyOpenCodeSessions(storageDir: string, editLocIndex?: EditLocI
   return sessions;
 }
 
-function queryOpenCodeDatabase<T>(database: DatabaseSync, sql: string): T[] {
+function queryOpenCodeDatabase<T>(database: SqliteDatabase, sql: string): T[] {
   try {
     return database.prepare(sql).all() as T[];
   } catch {
@@ -476,9 +506,11 @@ function decodeOpenCodePart(row: OcDbDataRow): OcPart | null {
 
 function parseOpenCodeDatabase(dbPath: string, editLocIndex?: EditLocIndex): Session[] {
   assertTrustedPath(dbPath);
-  let database: DatabaseSync;
+  const sqlite = loadSqlite();
+  if (!sqlite) return [];
+  let database: SqliteDatabase;
   try {
-    database = new DatabaseSync(dbPath, { readOnly: true });
+    database = new sqlite.DatabaseSync(dbPath, { readOnly: true });
   } catch {
     return [];
   }

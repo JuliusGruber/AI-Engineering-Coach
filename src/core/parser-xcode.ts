@@ -224,15 +224,22 @@ export function accumulateXcodeFileEdits(
 ): void {
   if (!editLocIndex || !fileEdits || editLocIndex.has(requestId)) return;
   const deltas: FileEditLocMap = new Map();
+  let recognized = 0;
   for (const edit of fileEdits) {
-    if (edit.status === 'undone') continue;
+    if (edit.status === 'undone') {
+      recognized++;
+      continue;
+    }
     const file = edit.filePath
       || (typeof edit.fileURL === 'string' ? fileUriToPath(edit.fileURL) : '');
     if (!file || typeof edit.originalContent !== 'string' || typeof edit.modifiedContent !== 'string') continue;
     recordContentReplacement(deltas, file, edit.originalContent, edit.modifiedContent);
+    recognized++;
   }
-  // Persisted Xcode telemetry is authoritative even when every edit was undone.
-  editLocIndex.set(requestId, deltas);
+  // Persisted Xcode telemetry is authoritative even when every edit was undone, but only once
+  // at least one edit was understood. A turn that edited nothing (chat-only) or whose edits
+  // carry no persisted contents must still fall back to counting response code blocks.
+  if (recognized > 0) editLocIndex.set(requestId, deltas);
 }
 
 function extractReferencedFiles(turnData: XcodeTurnData): string[] {

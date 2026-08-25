@@ -49,6 +49,23 @@ describe('edit tool deltas', () => {
     expect(edits.get('src/app.ts')).toEqual({ added: 1, removed: 1 });
   });
 
+  it('does not treat a removed comment line as a unified diff file header', () => {
+    const edits = parseApplyPatch([
+      'diff --git a/db/schema.sql b/db/schema.sql',
+      '--- a/db/schema.sql',
+      '+++ b/db/schema.sql',
+      '@@ -1,4 +1,4 @@',
+      '--- legacy column, kept for backfill',
+      '-  legacy_id INTEGER,',
+      '+-- replaced by the surrogate key',
+      '+  surrogate_id INTEGER,',
+      ' );',
+    ].join('\n'));
+
+    expect(edits.size).toBe(1);
+    expect(edits.get('db/schema.sql')).toEqual({ added: 2, removed: 2 });
+  });
+
   it('records create and replacement deltas using logical lines', () => {
     const edits: FileEditLocMap = new Map();
     recordCreatedContent(edits, 'new.ts', 'a\nb\n');

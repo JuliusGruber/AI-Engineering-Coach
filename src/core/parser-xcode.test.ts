@@ -96,12 +96,18 @@ describe('parseXcodeDatabases', () => {
       expect(editLocIndex.get('turn-undone')).toEqual(new Map());
     });
 
-    it('records authoritative zero LoC for a present empty file edit list', () => {
+    it('leaves a turn without recognizable edits to code-block counting', () => {
       const editLocIndex: EditLocIndex = new Map();
 
       accumulateXcodeFileEdits([], 'turn-empty', editLocIndex);
+      accumulateXcodeFileEdits(
+        [{ fileURL: 'file:///Users/me/proj/NoContent.swift', status: 'kept' }],
+        'turn-no-content',
+        editLocIndex,
+      );
 
-      expect(editLocIndex.get('turn-empty')).toEqual(new Map());
+      expect(editLocIndex.has('turn-empty')).toBe(false);
+      expect(editLocIndex.has('turn-no-content')).toBe(false);
     });
   });
 

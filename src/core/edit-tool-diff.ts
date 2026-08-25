@@ -76,16 +76,16 @@ function normalizeDiffPath(raw: string): string {
  */
 export function parseApplyPatch(patch: string): FileEditLocMap {
   const result: FileEditLocMap = new Map();
+  const lines = patch.split(/\r?\n/);
   let file = '';
-  let oldFile = '';
   let inHunk = false;
   let customPatch = false;
 
-  for (const line of patch.split(/\r?\n/)) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const customHeader = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/);
     if (customHeader) {
       file = normalizeDiffPath(customHeader[1]);
-      oldFile = file;
       inHunk = !line.startsWith('*** Delete File:');
       customPatch = true;
       if (file && !result.has(file)) result.set(file, { added: 0, removed: 0 });
@@ -105,18 +105,19 @@ export function parseApplyPatch(patch: string): FileEditLocMap {
     }
     if (line.startsWith('diff --git ')) {
       file = '';
-      oldFile = '';
       inHunk = false;
       customPatch = false;
       continue;
     }
-    if (!customPatch && line.startsWith('--- ')) {
-      oldFile = normalizeDiffPath(line.slice(4));
-      continue;
-    }
-    if (!customPatch && line.startsWith('+++ ')) {
-      file = normalizeDiffPath(line.slice(4)) || oldFile;
+    // `---`/`+++` only introduce a file when they appear as a pair. Inside a hunk a removed
+    // line whose content starts with `-- ` (a SQL or Lua comment, say) is serialized as
+    // `--- ...`, and treating that as a header would misattribute the rest of the hunk.
+    if (!customPatch && line.startsWith('--- ') && lines[i + 1]?.startsWith('+++ ')) {
+      const oldFile = normalizeDiffPath(line.slice(4));
+      file = normalizeDiffPath(lines[i + 1].slice(4)) || oldFile;
       if (file && !result.has(file)) result.set(file, { added: 0, removed: 0 });
+      inHunk = false;
+      i++;
       continue;
     }
     if (!customPatch && line.startsWith('@@')) {

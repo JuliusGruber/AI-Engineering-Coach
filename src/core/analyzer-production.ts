@@ -6,7 +6,7 @@
 /* Code production analytics */
 
 import { DateFilter, CodeProductionData } from './types';
-import { toDateStr, fillDayRange, normalizeModel } from './helpers';
+import { toDateStr, fillDayRange, normalizeModel, languageFromFile } from './helpers';
 import { LOC_COST_2010 } from './constants';
 import { AnalyzerBase } from './analyzer-base';
 
@@ -61,7 +61,7 @@ export class ProductionAnalyzer extends AnalyzerBase {
       for (const [file, loc] of editLocs) {
         totalAiLoc += loc.added;
         totalRemovedAiLoc += loc.removed;
-        this.addProductionLoc(langAi, file.split('.').pop()?.toLowerCase() || 'unknown', loc.added);
+        this.addProductionLoc(langAi, languageFromFile(file), loc.added);
         if (day) {
           this.addProductionLoc(dailyAi, day, loc.added);
           this.addProductionLoc(dailyRemovedAi, day, loc.removed);

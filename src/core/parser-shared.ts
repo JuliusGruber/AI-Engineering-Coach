@@ -11,7 +11,7 @@ import * as path from 'path';
 import { CodeBlock, Session, SessionRequest, Workspace } from './types';
 import { SessionSource } from './cache';
 import { EditLocIndex } from './edit-loc-diff';
-import { classifyWorkType } from './helpers';
+import { classifyWorkType, LANG_ALIASES } from './helpers';
 import { warnCore } from './log';
 import { SessionSchema } from './schemas';
 
@@ -234,17 +234,7 @@ const MAX_STORED_MESSAGE_CHARS = 16_000;
 const MAX_STORED_RESPONSE_CHARS = 24_000;
 const MAX_CODE_SCAN_CHARS = 128_000;
 
-export const LANG_ALIASES: Record<string, string> = {
-  sh: 'bash', shell: 'bash', zsh: 'bash',
-  ts: 'typescript', tsx: 'typescript',
-  js: 'javascript', jsx: 'javascript',
-  py: 'python', python3: 'python',
-  cs: 'csharp', 'c#': 'csharp',
-  yml: 'yaml', md: 'markdown',
-  tf: 'terraform', rs: 'rust', rb: 'ruby',
-  jsonc: 'json', jsonl: 'json',
-  txt: 'text', plaintext: 'text', env: 'dotenv',
-};
+export { LANG_ALIASES } from './helpers';
 
 const EXT_TO_TECH: Record<string, string> = {
   py: 'Python', pyx: 'Python', pyi: 'Python',
