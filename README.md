@@ -158,6 +158,14 @@ A few features depend on the local VS Code language model and are hidden in canv
 | **Burndown** | Monthly AI token budget progress with projections _(temporarily disabled)_                  |
 | **Patterns** | 7×24 activity heatmap and work-life balance signals                                         |
 
+### GitHub App
+
+This section appears only when the local GitHub Copilot app is installed.
+
+| Page             | Description                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Productivity** | Project sessions with and without issues, pull request and merge conversion, and a seven-day PR merge-ratio trend |
+
 ### Improve
 
 | Page                | Description                                                                                                                                |
