@@ -919,11 +919,21 @@ describe('parseEditState (AI-generated LoC)', () => {
     expect(totalFor(index, URI)).toBe(2);
   });
 
-  it('skips payloads that contain no textEdit operations', () => {
-    const raw = JSON.stringify({ timeline: { operations: [{ type: 'create', requestId: 'r1', uri: { external: URI } }] } });
+  it('counts create-only payloads', () => {
+    const raw = JSON.stringify({
+      timeline: {
+        operations: [{
+          type: 'create',
+          requestId: 'r1',
+          uri: { external: URI },
+          epoch: 1,
+          initialContent: 'a\nb\nc',
+        }],
+      },
+    });
     const index = new Map<string, Map<string, { added: number; removed: number }>>();
     parseEditState(raw, index, os.tmpdir());
-    expect(index.size).toBe(0);
+    expect(totalFor(index, URI)).toBe(3);
   });
 
   it('does not throw on corrupt JSON that contains the textEdit guard token', () => {
@@ -953,4 +963,3 @@ describe('parseEditState (AI-generated LoC)', () => {
     }
   });
 });
-

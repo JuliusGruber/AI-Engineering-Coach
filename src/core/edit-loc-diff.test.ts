@@ -371,16 +371,34 @@ describe('accumulateEditLoc', () => {
     expect(totalFor(index, URI)).toBe(4); // 3 for v1 + 1 added for v2
   });
 
-  it('ignores non-textEdit operations', () => {
+  it('counts created content and deleted content', () => {
     const timeline: EditTimelineLike = {
       operations: [
-        { type: 'create', requestId: 'r1', uri: { external: URI }, epoch: 1 },
-        { type: 'delete', requestId: 'r1', uri: { external: URI }, epoch: 2 },
+        { type: 'create', requestId: 'r1', uri: { external: URI }, epoch: 1, initialContent: 'a\nb\nc' },
+        { type: 'delete', requestId: 'r2', uri: { external: URI }, epoch: 2, finalContent: 'a\nb\nc' },
       ],
     };
     const index = newIndex();
     accumulateEditLoc(timeline, index);
-    expect(index.size).toBe(0);
+    expect(addedFor(index, 'r1', URI)).toBe(3);
+    expect(removedFor(index, 'r1', URI)).toBe(0);
+    expect(addedFor(index, 'r2', URI)).toBe(0);
+    expect(removedFor(index, 'r2', URI)).toBe(3);
+  });
+
+  it('preserves reconstructed state when request operations are interleaved', () => {
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', ''), baseline(URI, 'r2', 'a')],
+      operations: [
+        uriOp(URI, 'r1', 1, wholeFile('a')),
+        uriOp(URI, 'r2', 2, wholeFile('a\nb')),
+        uriOp(URI, 'r1', 3, wholeFile('a\nb\nc')),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+    expect(addedFor(index, 'r1', URI)).toBe(2);
+    expect(addedFor(index, 'r2', URI)).toBe(1);
   });
 
   it('counts small ranged edits (Anthropic-style) as the number of touched lines', () => {

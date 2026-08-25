@@ -145,13 +145,19 @@ function getMockData(method, params) {
     getCodeProduction: () => ({
       summary: {
         totalAiLoc: 14520, totalUserLoc: 3200, totalLoc: 17720,
+        totalRemovedAiLoc: 1200, totalNetAiLoc: 13320,
         aiBlocks: 892, userBlocks: 340, aiRatio: 0.82,
         locCost2010: 290400, costPerLoc: 0.04
       },
       byLanguage: { labels: ['TypeScript', 'Python', 'Go', 'Rust'], aiLoc: [8200, 3100, 2100, 1120], userLoc: [1800, 900, 400, 100] },
-      dailyTimeline: { labels: labels30, aiLoc: labels30.map(() => Math.floor(Math.random() * 600) + 100), userLoc: labels30.map(() => Math.floor(Math.random() * 150) + 20) },
+      dailyTimeline: { labels: labels30, aiLoc: labels30.map(() => Math.floor(Math.random() * 600) + 100), removedLoc: labels30.map(() => Math.floor(Math.random() * 50)), userLoc: labels30.map(() => Math.floor(Math.random() * 150) + 20) },
       byWorkspace: { labels: ['my-api', 'frontend-app', 'data-pipeline', 'mobile-sdk', 'infra-tools'], aiLoc: [5000, 4200, 3100, 1500, 720], userLoc: [1200, 1000, 600, 300, 100] },
-      dailyByWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 200) + 50) }
+      dailyByWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 200) + 50) },
+      dailyRemovedByWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 20)) },
+      dailyByModel: { 'gpt-4o': labels30.map(() => Math.floor(Math.random() * 200) + 50) },
+      dailyRemovedByModel: { 'gpt-4o': labels30.map(() => Math.floor(Math.random() * 20)) },
+      dailyByHarness: { 'Local Agent': labels30.map(() => Math.floor(Math.random() * 200) + 50) },
+      dailyRemovedByHarness: { 'Local Agent': labels30.map(() => Math.floor(Math.random() * 20)) }
     }),
 
     getConsumption: () => ({

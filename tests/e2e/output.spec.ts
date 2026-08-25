@@ -26,10 +26,10 @@ test.describe('Output', () => {
     expect(content).toMatch(/14[.,]?5/);
   });
 
-  test('shows AI ratio', async ({ page }) => {
+  test('shows gross and net AI LoC', async ({ page }) => {
     const content = await page.textContent('#content');
-    // Production tab shows AI-Generated LoC and cost
     expect(content).toContain('AI-Generated LoC');
+    expect(content).toContain('Net AI LoC');
   });
 
   test('shows language breakdown chart', async ({ page }) => {
@@ -38,25 +38,24 @@ test.describe('Output', () => {
     expect(content).toContain('Language');
   });
 
-  test('renders consumption tab with model totals', async ({ page }) => {
-    // Click consumption tab
+  test('renders token usage tab with model totals', async ({ page }) => {
     const tabs = page.locator('#output-tabs .tab');
-    const consumptionTab = tabs.filter({ hasText: /consumption/i });
-    if (await consumptionTab.count() > 0) {
-      await consumptionTab.click();
-      await page.waitForFunction(() => {
-        const content = document.getElementById('content');
-        return content && !content.querySelector('.loading-spinner');
-      }, { timeout: 10000 });
-    }
+    const tokenUsageTab = tabs.filter({ hasText: /token usage/i });
+    test.skip(await tokenUsageTab.count() === 0, 'Token usage is gated by FF_TOKEN_REPORTING_ENABLED');
+    await tokenUsageTab.click();
+    await page.waitForFunction(() => {
+      const content = document.getElementById('content');
+      return content && !content.querySelector('.loading-spinner');
+    }, { timeout: 10000 });
     const content = await page.textContent('#content');
     expect(content).toContain('gpt-4o');
   });
 
   test('shows AI credits tab', async ({ page }) => {
     const tabs = page.locator('#output-tabs .tab');
-    const creditsTab = tabs.filter({ hasText: /Credit/i });
-    await creditsTab.first().click();
+    const tokenUsageTab = tabs.filter({ hasText: /token usage/i });
+    test.skip(await tokenUsageTab.count() === 0, 'Token usage is gated by FF_TOKEN_REPORTING_ENABLED');
+    await tokenUsageTab.click();
     await page.waitForTimeout(2000);
     const content = await page.textContent('#content');
     // totalCredits: 142.5 displayed as 143 (rounded)

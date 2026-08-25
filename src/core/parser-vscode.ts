@@ -189,7 +189,7 @@ function makeInitialContentResolver(state: EditState, stateDir: string): Initial
 
 /** Parses an edit-state JSON payload and accumulates AI-produced LoC into `editLocIndex`. */
 export function parseEditState(raw: string, editLocIndex: ParseContext['editLocIndex'], stateDir: string): void {
-  if (!raw.includes('"textEdit"')) return;
+  if (!raw.includes('"textEdit"') && !raw.includes('"create"') && !raw.includes('"delete"')) return;
   let state: EditState;
   try { state = JSON.parse(raw) as EditState; } catch (e) {
     warnCore('parser-vscode', `Corrupt state payload in ${stateDir}`, e);

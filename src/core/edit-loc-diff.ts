@@ -39,6 +39,8 @@ export interface EditOpLike {
   uri?: { external?: string };
   epoch?: number;
   edits?: TextEditLike[];
+  initialContent?: string;
+  finalContent?: string;
 }
 
 /** A baseline entry from `timeline.fileBaselines` (full pre-edit content for a request). */
@@ -358,11 +360,11 @@ function buildBaselineMap(timeline: EditTimelineLike): Map<string, string> {
   return baselineByKey;
 }
 
-/** Groups `textEdit` operations by file URI, preserving input order. */
-function groupTextEditOpsByFile(ops: EditOpLike[]): Map<string, EditOpLike[]> {
+/** Groups LoC-affecting operations by file URI, preserving input order. */
+function groupEditOpsByFile(ops: EditOpLike[]): Map<string, EditOpLike[]> {
   const byFile = new Map<string, EditOpLike[]>();
   for (const op of ops) {
-    if (op.type !== 'textEdit') continue;
+    if (op.type !== 'textEdit' && op.type !== 'create' && op.type !== 'delete') continue;
     const uri = op.uri?.external;
     if (!uri || !op.requestId) continue;
     let arr = byFile.get(uri);
@@ -416,15 +418,32 @@ function accumulateFileOps(
 ): void {
   fileOps.sort((a, b) => (a.epoch ?? 0) - (b.epoch ?? 0));
   let prevState: LineState | undefined;
-  let lastReqId: string | undefined;
+  const seededRequests = new Set<string>();
   for (const op of fileOps) {
     const reqId = op.requestId!;
-    if (reqId !== lastReqId) {
+    if (!seededRequests.has(reqId)) {
       const seeded = seedPrev(prevState?.content, uri, reqId, baselineByKey, resolveInitialContent);
       if (seeded !== prevState?.content) prevState = buildLineState(seeded);
-      lastReqId = reqId;
+      seededRequests.add(reqId);
     }
     prevState ??= buildLineState('');
+
+    if (op.type === 'create') {
+      const nextState = buildLineState(op.initialContent ?? '');
+      const { added, removed } = countAddedRemovedHashes([], nextState.hashes);
+      addLoc(editLocIndex, reqId, uri, added, removed);
+      prevState = nextState;
+      continue;
+    }
+
+    if (op.type === 'delete') {
+      const deletedState = op.finalContent === undefined ? prevState : buildLineState(op.finalContent);
+      const { added, removed } = countAddedRemovedHashes(deletedState.hashes, []);
+      addLoc(editLocIndex, reqId, uri, added, removed);
+      prevState = buildLineState('');
+      continue;
+    }
+
     const incremental = tryApplyIncrementalEdit(prevState, op.edits);
     if (incremental) {
       addLoc(editLocIndex, reqId, uri, incremental.diff.added, incremental.diff.removed);
@@ -461,7 +480,7 @@ export function accumulateEditLoc(
   if (!ops || ops.length === 0) return;
 
   const baselineByKey = buildBaselineMap(timeline);
-  const byFile = groupTextEditOpsByFile(ops);
+  const byFile = groupEditOpsByFile(ops);
   for (const [uri, fileOps] of byFile) {
     accumulateFileOps(uri, fileOps, baselineByKey, editLocIndex, resolveInitialContent);
   }
