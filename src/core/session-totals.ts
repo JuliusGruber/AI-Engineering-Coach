@@ -6,6 +6,8 @@
 /* Pure session aggregate reducers used for loading-progress totals. No vscode/fs dependency. */
 
 import type { Session } from './types';
+import type { EditLocIndex } from './edit-loc-diff';
+import { getRequestLoc } from './analyzer-base';
 
 /** Running totals surfaced on the loading screen as sessions are discovered. */
 export interface SessionTotals {
@@ -22,7 +24,10 @@ export interface SessionTotals {
 }
 
 /** Compute the loading-progress totals for a set of sessions in a single pass per metric. */
-export function computeSessionTotals(sessions: readonly Session[]): SessionTotals {
+export function computeSessionTotals(
+  sessions: readonly Session[],
+  editLocIndex: EditLocIndex = new Map(),
+): SessionTotals {
   let linesOfCode = 0;
   let toolCalls = 0;
   let imagesAnalyzed = 0;
@@ -31,7 +36,7 @@ export function computeSessionTotals(sessions: readonly Session[]): SessionTotal
   for (const s of sessions) {
     requests += s.requests.length;
     for (const r of s.requests) {
-      for (const b of r.aiCode) linesOfCode += b.loc;
+      linesOfCode += getRequestLoc(r, editLocIndex);
       toolCalls += r.toolsUsed.length;
       imagesAnalyzed += r.variableKinds['image'] || 0;
       for (const f of r.editedFiles) editedFiles.add(f);
@@ -51,7 +56,7 @@ export interface RunningTotals {
   snapshot(): SessionTotals;
 }
 
-export function createRunningTotals(): RunningTotals {
+export function createRunningTotals(editLocIndex: EditLocIndex = new Map()): RunningTotals {
   let linesOfCode = 0;
   let toolCalls = 0;
   let imagesAnalyzed = 0;
@@ -61,7 +66,7 @@ export function createRunningTotals(): RunningTotals {
     add(session: Session): void {
       requests += session.requests.length;
       for (const r of session.requests) {
-        for (const b of r.aiCode) linesOfCode += b.loc;
+        linesOfCode += getRequestLoc(r, editLocIndex);
         toolCalls += r.toolsUsed.length;
         imagesAnalyzed += r.variableKinds['image'] || 0;
         for (const f of r.editedFiles) editedFiles.add(f);

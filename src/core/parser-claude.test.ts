@@ -12,6 +12,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
+import { EditLocIndex } from './edit-loc-diff';
 import { parseClaudeSessions } from './parser-claude';
 
 /** os.tmpdir() on Windows often returns 8.3 short names (e.g. TAMASB~1)
@@ -64,6 +65,25 @@ function makeAssistant(text: string, ts = '2025-06-15T10:00:02Z', usage?: Record
   };
 }
 
+function makeToolAssistant(
+  name: string,
+  input: Record<string, unknown>,
+  ts = '2025-06-15T10:00:02Z',
+  id?: string,
+): object {
+  return {
+    type: 'assistant',
+    timestamp: ts,
+    sessionId: 'sess-1',
+    message: {
+      role: 'assistant',
+      model: 'claude-sonnet-4',
+      content: [{ type: 'tool_use', id, name, input }],
+      usage: { input_tokens: 100, output_tokens: 20 },
+    },
+  };
+}
+
 function withProjectsDir(filename: string, lines: object[], run: (projectsDir: string) => void): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-parser-test-'));
   const projectsDir = path.join(root, 'projects');
@@ -75,6 +95,81 @@ function withProjectsDir(filename: string, lines: object[], run: (projectsDir: s
 }
 
 describe('parseClaudeSessions', () => {
+  it('extracts current Edit new_string and MultiEdit deltas', () => {
+    withProjectsDir('s.jsonl', [
+      makeUser('edit files', '2025-06-15T10:00:00Z', { uuid: 'request_claude_edit' }),
+      makeToolAssistant('Edit', {
+        file_path: '/Users/me/proj/app.ts',
+        old_string: 'a\nold',
+        new_string: 'a\nnew\nextra',
+      }),
+      makeToolAssistant('MultiEdit', {
+        file_path: '/Users/me/proj/other.ts',
+        edits: [
+          { old_string: 'old1', new_string: 'new1' },
+          { old_string: 'old2', new_string: 'new2\nextra2' },
+        ],
+      }, '2025-06-15T10:00:03Z'),
+    ], (projectsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const request = parseClaudeSessions(projectsDir, editLocIndex)[0].sessions[0].requests[0];
+
+      expect(request.toolsUsed).toEqual(['Edit', 'MultiEdit']);
+      expect(request.editedFiles).toEqual([
+        '/Users/me/proj/app.ts',
+        '/Users/me/proj/other.ts',
+      ]);
+      expect(editLocIndex.get('request_claude_edit')?.get('/Users/me/proj/app.ts'))
+        .toEqual({ added: 2, removed: 1 });
+      expect(editLocIndex.get('request_claude_edit')?.get('/Users/me/proj/other.ts'))
+        .toEqual({ added: 3, removed: 2 });
+    });
+  });
+
+  it('excludes edits whose correlated tool result reports an error', () => {
+    withProjectsDir('s.jsonl', [
+      makeUser('edit a file', '2025-06-15T10:00:00Z', { uuid: 'request_failed_edit' }),
+      makeToolAssistant('Edit', {
+        file_path: '/Users/me/proj/app.ts',
+        old_string: 'old',
+        new_string: 'new',
+      }, '2025-06-15T10:00:01Z', 'tool-failed'),
+      {
+        type: 'user',
+        timestamp: '2025-06-15T10:00:02Z',
+        sessionId: 'sess-1',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'tool-failed', is_error: true }],
+        },
+      },
+    ], (projectsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const request = parseClaudeSessions(projectsDir, editLocIndex)[0].sessions[0].requests[0];
+
+      expect(request.toolsUsed).toEqual(['Edit']);
+      expect(request.editedFiles).toEqual([]);
+      expect(editLocIndex.has('request_failed_edit')).toBe(false);
+    });
+  });
+
+  it('excludes correlated edits without a tool result', () => {
+    withProjectsDir('s.jsonl', [
+      makeUser('edit a file', '2025-06-15T10:00:00Z', { uuid: 'request_incomplete_edit' }),
+      makeToolAssistant('Edit', {
+        file_path: '/Users/me/proj/app.ts',
+        old_string: 'old',
+        new_string: 'new',
+      }, '2025-06-15T10:00:01Z', 'tool-incomplete'),
+    ], (projectsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const request = parseClaudeSessions(projectsDir, editLocIndex)[0].sessions[0].requests[0];
+
+      expect(request.editedFiles).toEqual([]);
+      expect(editLocIndex.size).toBe(0);
+    });
+  });
+
   it('skips tool_result-only user records and merges following assistant into prior real user request', () => {
     withProjectsDir('s.jsonl', [
       makeUser('write a file please'),

@@ -9,6 +9,15 @@ import { Session, SessionRequest, DateFilter } from './types';
 import { EditLocIndex } from './edit-loc-diff';
 import { toDateStr } from './helpers';
 
+/** Total LoC for a request: exact edit lines when available, otherwise code-block lines. */
+export function getRequestLoc(request: SessionRequest, editLocIndex: EditLocIndex): number {
+  const fileEdits = editLocIndex.get(request.requestId);
+  if (!fileEdits) return request.aiCode.reduce((sum, block) => sum + block.loc, 0);
+  let editLoc = 0;
+  for (const value of fileEdits.values()) editLoc += value.added;
+  return editLoc;
+}
+
 export class AnalyzerBase {
   protected readonly sessions: Session[];
   protected readonly editLocIndex: EditLocIndex;
@@ -54,12 +63,8 @@ export class AnalyzerBase {
     return reqs;
   }
 
-  /** Total LoC for a request: code-block lines + agent-mode edit lines. */
   protected requestLoc(r: SessionRequest): number {
-    let loc = r.aiCode.reduce((s, b) => s + b.loc, 0);
-    const eMap = this.editLocIndex.get(r.requestId);
-    if (eMap) for (const v of eMap.values()) loc += v.added;
-    return loc;
+    return getRequestLoc(r, this.editLocIndex);
   }
 
   protected filteredSessions(f?: DateFilter): Session[] {

@@ -7,7 +7,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, it, expect } from 'vitest';
-import { findXcodeDirs, parseXcodeDatabases } from './parser-xcode';
+import { EditLocIndex } from './edit-loc-diff';
+import { accumulateXcodeFileEdits, findXcodeDirs, parseXcodeDatabases } from './parser-xcode';
 
 const tempDirs: string[] = [];
 
@@ -57,6 +58,51 @@ describe('parseXcodeDatabases', () => {
   it('returns empty array for non-existent directory', () => {
     const sessions = parseXcodeDatabases('/nonexistent/path');
     expect(sessions).toEqual([]);
+  });
+
+  describe('Xcode file edit deltas', () => {
+    it('diffs persisted original/modified contents and excludes undone edits', () => {
+      const editLocIndex: EditLocIndex = new Map();
+      accumulateXcodeFileEdits([
+        {
+          fileURL: 'file:///Users/me/proj/App.swift',
+          originalContent: 'a\nold',
+          modifiedContent: 'a\nnew\nextra',
+          status: 'kept',
+        },
+        {
+          fileURL: 'file:///Users/me/proj/Undone.swift',
+          originalContent: 'old',
+          modifiedContent: 'new',
+          status: 'undone',
+        },
+      ], 'turn-1', editLocIndex);
+
+      expect(editLocIndex.get('turn-1')?.get('/Users/me/proj/App.swift'))
+        .toEqual({ added: 2, removed: 1 });
+      expect(editLocIndex.get('turn-1')?.has('/Users/me/proj/Undone.swift')).toBe(false);
+    });
+
+    it('records authoritative zero LoC when every edit was undone', () => {
+      const editLocIndex: EditLocIndex = new Map();
+
+      accumulateXcodeFileEdits([{
+        fileURL: 'file:///Users/me/proj/Undone.swift',
+        originalContent: 'old',
+        modifiedContent: 'new',
+        status: 'undone',
+      }], 'turn-undone', editLocIndex);
+
+      expect(editLocIndex.get('turn-undone')).toEqual(new Map());
+    });
+
+    it('records authoritative zero LoC for a present empty file edit list', () => {
+      const editLocIndex: EditLocIndex = new Map();
+
+      accumulateXcodeFileEdits([], 'turn-empty', editLocIndex);
+
+      expect(editLocIndex.get('turn-empty')).toEqual(new Map());
+    });
   });
 
   it('returns empty array when no db files present', () => {

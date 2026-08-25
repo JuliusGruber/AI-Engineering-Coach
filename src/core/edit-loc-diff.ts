@@ -37,10 +37,20 @@ export interface EditOpLike {
   type: string;
   requestId?: string;
   uri?: { external?: string };
+  oldUri?: { external?: string };
+  newUri?: { external?: string };
   epoch?: number;
   edits?: TextEditLike[];
+  cellEdits?: NotebookCellEditLike[];
   initialContent?: string;
   finalContent?: string;
+}
+
+/** The code-bearing subset of VS Code notebook cell edit operations. */
+export interface NotebookCellEditLike {
+  editType?: number;
+  count?: number;
+  cells?: { source?: string }[];
 }
 
 /** A baseline entry from `timeline.fileBaselines` (full pre-edit content for a request). */
@@ -54,6 +64,7 @@ export interface FileBaselineLike {
 export interface EditTimelineLike {
   operations?: EditOpLike[];
   fileBaselines?: [string, FileBaselineLike][];
+  currentEpoch?: number;
 }
 
 /** Resolves the session-initial content for a file URI (read from `contents/<hash>`). */
@@ -360,31 +371,14 @@ function buildBaselineMap(timeline: EditTimelineLike): Map<string, string> {
   return baselineByKey;
 }
 
-/** Groups LoC-affecting operations by file URI, preserving input order. */
-function groupEditOpsByFile(ops: EditOpLike[]): Map<string, EditOpLike[]> {
-  const byFile = new Map<string, EditOpLike[]>();
-  for (const op of ops) {
-    if (op.type !== 'textEdit' && op.type !== 'create' && op.type !== 'delete') continue;
-    const uri = op.uri?.external;
-    if (!uri || !op.requestId) continue;
-    let arr = byFile.get(uri);
-    if (!arr) {
-      arr = [];
-      byFile.set(uri, arr);
-    }
-    arr.push(op);
-  }
-  return byFile;
-}
-
 /** Records `added`/`removed` lines against a (request, file) cell, summing into any existing value. */
-function addLoc(editLocIndex: EditLocIndex, reqId: string, uri: string, added: number, removed: number): void {
-  if (added <= 0 && removed <= 0) return;
+export function addEditLoc(editLocIndex: EditLocIndex, reqId: string, uri: string, added: number, removed: number): void {
   let fileMap = editLocIndex.get(reqId);
   if (!fileMap) {
     fileMap = new Map();
     editLocIndex.set(reqId, fileMap);
   }
+  if (added <= 0 && removed <= 0) return;
   const cur = fileMap.get(uri);
   if (cur) {
     cur.added += added;
@@ -408,52 +402,95 @@ function seedPrev(
   return prev;
 }
 
-/** Walks one file's operations in epoch order, attributing newly produced lines to each request. */
-function accumulateFileOps(
-  uri: string,
-  fileOps: EditOpLike[],
+function countNotebookAddedLines(cellEdits: NotebookCellEditLike[] | undefined): number {
+  let added = 0;
+  for (const edit of cellEdits ?? []) {
+    // CellEditType.Replace = 1. New cell sources are exact additions for both inserts
+    // and replacements. Removed sources still need a notebook snapshot to reconstruct.
+    if (edit.editType !== 1) continue;
+    for (const cell of edit.cells ?? []) {
+      if (typeof cell.source === 'string') added += countLines(cell.source);
+    }
+  }
+  return added;
+}
+
+/** Walks visible operations in epoch order, carrying reconstructed state across renames. */
+function accumulateVisibleOps(
+  operations: EditOpLike[],
   baselineByKey: Map<string, string>,
   editLocIndex: EditLocIndex,
   resolveInitialContent?: InitialContentResolver,
 ): void {
-  fileOps.sort((a, b) => (a.epoch ?? 0) - (b.epoch ?? 0));
-  let prevState: LineState | undefined;
-  const seededRequests = new Set<string>();
-  for (const op of fileOps) {
+  const states = new Map<string, LineState>();
+  const seededRequests = new Map<string, Set<string>>();
+
+  operations.sort((a, b) => (a.epoch ?? 0) - (b.epoch ?? 0));
+  for (const op of operations) {
     const reqId = op.requestId!;
-    if (!seededRequests.has(reqId)) {
+    if (op.type === 'rename') {
+      const oldUri = op.oldUri?.external ?? op.uri?.external;
+      const newUri = op.newUri?.external;
+      if (!oldUri || !newUri) continue;
+      const state = states.get(oldUri)
+        ?? buildLineState(seedPrev(undefined, oldUri, reqId, baselineByKey, resolveInitialContent));
+      if (state) {
+        states.delete(oldUri);
+        states.set(newUri, state);
+      }
+      const seeded = seededRequests.get(oldUri) ?? new Set<string>();
+      seeded.add(reqId);
+      seededRequests.delete(oldUri);
+      seededRequests.set(newUri, seeded);
+      continue;
+    }
+
+    const uri = op.uri?.external;
+    if (!uri) continue;
+    let prevState = states.get(uri);
+    let seededForFile = seededRequests.get(uri);
+    if (!seededForFile) {
+      seededForFile = new Set<string>();
+      seededRequests.set(uri, seededForFile);
+    }
+    if (!seededForFile.has(reqId)) {
       const seeded = seedPrev(prevState?.content, uri, reqId, baselineByKey, resolveInitialContent);
       if (seeded !== prevState?.content) prevState = buildLineState(seeded);
-      seededRequests.add(reqId);
+      seededForFile.add(reqId);
     }
     prevState ??= buildLineState('');
 
     if (op.type === 'create') {
       const nextState = buildLineState(op.initialContent ?? '');
       const { added, removed } = countAddedRemovedHashes([], nextState.hashes);
-      addLoc(editLocIndex, reqId, uri, added, removed);
-      prevState = nextState;
+      addEditLoc(editLocIndex, reqId, uri, added, removed);
+      states.set(uri, nextState);
       continue;
     }
 
     if (op.type === 'delete') {
       const deletedState = op.finalContent === undefined ? prevState : buildLineState(op.finalContent);
       const { added, removed } = countAddedRemovedHashes(deletedState.hashes, []);
-      addLoc(editLocIndex, reqId, uri, added, removed);
-      prevState = buildLineState('');
+      addEditLoc(editLocIndex, reqId, uri, added, removed);
+      states.set(uri, buildLineState(''));
+      continue;
+    }
+
+    if (op.type === 'notebookEdit') {
+      addEditLoc(editLocIndex, reqId, uri, countNotebookAddedLines(op.cellEdits), 0);
       continue;
     }
 
     const incremental = tryApplyIncrementalEdit(prevState, op.edits);
     if (incremental) {
-      addLoc(editLocIndex, reqId, uri, incremental.diff.added, incremental.diff.removed);
-      prevState = incremental.nextState;
+      addEditLoc(editLocIndex, reqId, uri, incremental.diff.added, incremental.diff.removed);
+      states.set(uri, incremental.nextState);
     } else {
       const next = applyTextEditsWithLineStarts(prevState.content, op.edits ?? [], prevState.lineStarts);
       const nextState = buildLineState(next);
       const { added, removed } = countAddedRemovedHashes(prevState.hashes, nextState.hashes);
-      addLoc(editLocIndex, reqId, uri, added, removed);
-      prevState = nextState;
+      addEditLoc(editLocIndex, reqId, uri, added, removed);
+      states.set(uri, nextState);
     }
   }
 }
@@ -479,9 +516,28 @@ export function accumulateEditLoc(
   const ops = timeline?.operations;
   if (!ops || ops.length === 0) return;
 
-  const baselineByKey = buildBaselineMap(timeline);
-  const byFile = groupEditOpsByFile(ops);
-  for (const [uri, fileOps] of byFile) {
-    accumulateFileOps(uri, fileOps, baselineByKey, editLocIndex, resolveInitialContent);
+  const locTypes = new Set(['textEdit', 'create', 'delete', 'notebookEdit']);
+  const candidates = ops.filter(op =>
+    (locTypes.has(op.type) || op.type === 'rename')
+    && typeof op.requestId === 'string'
+    && (op.type === 'rename' || typeof op.uri?.external === 'string'),
+  );
+
+  // An empty map is meaningful: the request had authoritative edit telemetry but
+  // produced no surviving delta (for example, its operations were undone or only
+  // renamed a file).
+  for (const reqId of new Set(
+    candidates.map(op => op.requestId!),
+  )) {
+    // VS Code's timeline is the authoritative source for this request. Replace any
+    // lower-fidelity harness delta that may have been parsed earlier.
+    editLocIndex.set(reqId, new Map());
   }
+
+  const currentEpoch = timeline.currentEpoch;
+  const visible = typeof currentEpoch === 'number'
+    ? candidates.filter(op => (op.epoch ?? 0) < currentEpoch)
+    : candidates;
+  const baselineByKey = buildBaselineMap(timeline);
+  accumulateVisibleOps(visible, baselineByKey, editLocIndex, resolveInitialContent);
 }

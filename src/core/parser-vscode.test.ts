@@ -936,6 +936,30 @@ describe('parseEditState (AI-generated LoC)', () => {
     expect(totalFor(index, URI)).toBe(3);
   });
 
+  it('counts inserted notebook cell sources through the serialized state parser', () => {
+    const notebookUri = 'file:///project/notebook.ipynb';
+    const raw = JSON.stringify({
+      timeline: {
+        operations: [{
+          type: 'notebookEdit',
+          requestId: 'r1',
+          uri: { external: notebookUri },
+          epoch: 1,
+          cellEdits: [{
+            editType: 1,
+            count: 0,
+            cells: [{ source: 'const one = 1;\nconst two = 2;' }],
+          }],
+        }],
+      },
+    });
+    const index = new Map<string, Map<string, { added: number; removed: number }>>();
+
+    parseEditState(raw, index, os.tmpdir());
+
+    expect(index.get('r1')?.get(notebookUri)).toEqual({ added: 2, removed: 0 });
+  });
+
   it('does not throw on corrupt JSON that contains the textEdit guard token', () => {
     const index = new Map<string, Map<string, { added: number; removed: number }>>();
     expect(() => parseEditState('{"textEdit": not-valid-json', index, os.tmpdir())).not.toThrow();

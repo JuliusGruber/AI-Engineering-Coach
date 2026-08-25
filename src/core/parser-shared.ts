@@ -56,6 +56,9 @@ function getTrustedRoots(): string[] {
     if (home) roots.push(path.resolve(home, '.config', 'Code'));
     if (home) roots.push(path.resolve(home, '.config', 'Code - Insiders'));
   }
+  for (const configuredRoot of [process.env.XDG_DATA_HOME, process.env.LOCALAPPDATA]) {
+    if (configuredRoot) roots.push(path.resolve(configuredRoot));
+  }
 
   // Standard session log locations
   if (home) {

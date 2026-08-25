@@ -634,7 +634,7 @@ describe('Analyzer', () => {
 });
 
 describe('getCodeProduction with deduplicated edit LoC', () => {
-  it('combines aiCode blocks with incrementally-counted edit LoC instead of summing whole-file snapshots', () => {
+  it('prefers exact edit LoC over synthetic code blocks for the same request', () => {
     const URI = 'file:///proj/app.ts';
     const v1 = Array.from({ length: 10 }, (_, i) => `line${i}`).join('\n');
     const v2 = v1 + '\nline10';
@@ -662,8 +662,9 @@ describe('getCodeProduction with deduplicated edit LoC', () => {
     ];
     const a = new Analyzer(sessions, editLocIndex);
     const prod = a.getCodeProduction();
-    // 5 code-block LoC + 2 deduplicated edit LoC = 7 (not 5 + 33 from naive snapshot summing).
-    expect(prod.summary.totalAiLoc).toBe(7);
+    // The code block represents the same tool payload, so only the 2 exact edited lines count.
+    expect(prod.summary.totalAiLoc).toBe(2);
+    expect(a.getDailyActivity().loc).toEqual([2]);
   });
 
   it('reports net = gross added minus removed and surfaces removed in the daily timeline', () => {
@@ -690,14 +691,14 @@ describe('getCodeProduction with deduplicated edit LoC', () => {
       }),
     ];
     const prod = new Analyzer(sessions, editLocIndex).getCodeProduction();
-    // Gross = 5 code-block LoC + 0 edit-added; removed = 3; net = 5 - 3 = 2.
-    expect(prod.summary.totalAiLoc).toBe(5);
+    // Exact edit telemetry replaces the synthetic block: gross 0, removed 3, net -3.
+    expect(prod.summary.totalAiLoc).toBe(0);
     expect(prod.summary.totalRemovedAiLoc).toBe(3);
-    expect(prod.summary.totalNetAiLoc).toBe(2);
+    expect(prod.summary.totalNetAiLoc).toBe(-3);
 
     const dayIdx = prod.dailyTimeline.labels.indexOf(day);
     expect(dayIdx).toBeGreaterThanOrEqual(0);
-    expect(prod.dailyTimeline.aiLoc[dayIdx]).toBe(5);
+    expect(prod.dailyTimeline.aiLoc[dayIdx]).toBe(0);
     expect(prod.dailyTimeline.removedLoc[dayIdx]).toBe(3);
     // Removed is broken down by dimension and aligns with the same day index.
     expect(prod.dailyRemovedByModel['gpt-5'][dayIdx]).toBe(3);
@@ -705,4 +706,3 @@ describe('getCodeProduction with deduplicated edit LoC', () => {
     expect(prod.dailyRemovedByHarness['Codex'][dayIdx]).toBe(3);
   });
 });
-

@@ -68,6 +68,7 @@ import {
   collectExternalHarnessesAsync,
   collectExternalHarnessesSync,
 } from './parser-harnesses';
+import { createRequest } from './parser-shared';
 
 const XCODE_DIR = path.join('/Users/test/.config/github-copilot/xcode');
 
@@ -196,7 +197,7 @@ describe('parseAllLogs', () => {
 
     const result = parseAllLogs([XCODE_DIR]);
 
-    expect(parseXcodeDatabases).toHaveBeenCalledWith(XCODE_DIR);
+    expect(parseXcodeDatabases).toHaveBeenCalledWith(XCODE_DIR, result.editLocIndex);
     expect(result.sessions).toHaveLength(1);
     expect(result.workspaces.get('xc-ws')).toEqual({
       id: 'xc-ws',
@@ -230,7 +231,11 @@ describe('parseAllLogs', () => {
   it('calls collectExternalHarnessesSync', () => {
     const result = parseAllLogs(['/logs/vscode']);
 
-    expect(collectExternalHarnessesSync).toHaveBeenCalledWith(result.workspaces, result.sessions);
+    expect(collectExternalHarnessesSync).toHaveBeenCalledWith(
+      result.workspaces,
+      result.sessions,
+      result.editLocIndex,
+    );
   });
 
   it('calls stripSessionsForMemory with parsed sessions', () => {
@@ -264,7 +269,7 @@ describe('parseAllLogsAsyncDetailed', () => {
     await parseAllLogsAsyncDetailed(['/logs']);
 
     expect(loadCacheData).not.toHaveBeenCalled();
-    expect(scanVsCodeDirs).not.toHaveBeenCalled();
+    expect(scanVsCodeDirs).toHaveBeenCalledWith([]);
     expect(processWorkspaceEntryAsync).not.toHaveBeenCalled();
     expect(setMemoryCache).not.toHaveBeenCalled();
   });
@@ -286,8 +291,88 @@ describe('parseAllLogsAsyncDetailed', () => {
     expect(collectExternalHarnessesAsync).toHaveBeenCalledWith(
       cachedResult.workspaces,
       cachedResult.sessions,
+      cachedResult.editLocIndex,
       expect.any(Object),
     );
+  });
+
+  it('replaces empty OpenCode maps while preserving correlated empty Claude host maps', async () => {
+    const cachedResult = makeResult();
+    const openCodeRequest = createRequest({
+      requestId: 'opencode-empty',
+      messageText: '',
+      responseText: '',
+    });
+    const claudeRequest = createRequest({
+      requestId: 'claude-host-empty',
+      messageText: '',
+      responseText: '',
+    });
+    cachedResult.sessions.push(
+      makeSession({
+        sessionId: 'opencode',
+        harness: 'OpenCode',
+        requests: [openCodeRequest],
+        requestCount: 1,
+      }),
+      makeSession({
+        sessionId: 'claude',
+        harness: 'Claude',
+        requests: [claudeRequest],
+        requestCount: 1,
+      }),
+    );
+    cachedResult.editLocIndex.set('opencode-empty', new Map());
+    cachedResult.editLocIndex.set('claude-host-empty', new Map());
+    vi.mocked(getMemoryCache).mockReturnValue({ result: cachedResult, dirMetas: {} });
+
+    const parsed = await parseAllLogsAsyncDetailed(['/logs']);
+
+    expect(parsed.result.editLocIndex.has('opencode-empty')).toBe(false);
+    expect(parsed.result.editLocIndex.get('claude-host-empty')).toEqual(new Map());
+  });
+
+  it('refreshes Copilot CLI/App and Xcode sessions on memory-cache hits', async () => {
+    const cliDir = path.join('/Users/test', '.copilot', 'session-state');
+    const cachedResult = makeResult();
+    const oldCliRequest = createRequest({
+      requestId: 'old-cli-request',
+      messageText: '',
+      responseText: '',
+    });
+    cachedResult.sessions.push(
+      makeSession({
+        sessionId: 'old-cli',
+        harness: 'GitHub Copilot CLI',
+        requests: [oldCliRequest],
+        requestCount: 1,
+      }),
+      makeSession({ sessionId: 'old-xcode', harness: 'Xcode' }),
+    );
+    cachedResult.editLocIndex.set(
+      'old-cli-request',
+      new Map([['src/app.ts', { added: 10, removed: 0 }]]),
+    );
+    vi.mocked(getMemoryCache).mockReturnValue({ result: cachedResult, dirMetas: {} });
+    vi.mocked(scanVsCodeDirs).mockReturnValue({
+      entries: [{ logsDir: cliDir, dirEntries: [dirEntry('fresh-cli')] }],
+      totalDirs: 1,
+    });
+    vi.mocked(parseXcodeDatabasesAsync).mockResolvedValue([
+      makeSession({ sessionId: 'fresh-xcode', harness: 'Xcode' }),
+    ]);
+
+    const parsed = await parseAllLogsAsyncDetailed([cliDir, XCODE_DIR]);
+
+    expect(parsed.result.sessions.map(session => session.sessionId)).toEqual(['fresh-xcode']);
+    expect(parsed.result.editLocIndex.has('old-cli-request')).toBe(false);
+    expect(processWorkspaceEntryAsync).toHaveBeenCalledWith(
+      cliDir,
+      'fresh-cli',
+      'VS Code',
+      expect.any(Object),
+    );
+    expect(parseXcodeDatabasesAsync).toHaveBeenCalledWith(XCODE_DIR, parsed.result.editLocIndex);
   });
 
   it('reports progress during a cold parse', async () => {
@@ -334,7 +419,7 @@ describe('parseAllLogsAsyncDetailed', () => {
 
     const parsed = await parseAllLogsAsyncDetailed([XCODE_DIR]);
 
-    expect(parseXcodeDatabasesAsync).toHaveBeenCalledWith(XCODE_DIR);
+    expect(parseXcodeDatabasesAsync).toHaveBeenCalledWith(XCODE_DIR, parsed.result.editLocIndex);
     expect(parsed.result.workspaces.get('xc-ws')).toEqual({
       id: 'xc-ws',
       name: 'Xcode Workspace',
@@ -348,6 +433,7 @@ describe('parseAllLogsAsyncDetailed', () => {
     expect(collectExternalHarnessesAsync).toHaveBeenCalledWith(
       parsed.result.workspaces,
       parsed.result.sessions,
+      parsed.result.editLocIndex,
       expect.any(Object),
     );
   });

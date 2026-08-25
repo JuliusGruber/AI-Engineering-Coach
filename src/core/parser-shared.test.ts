@@ -3,9 +3,10 @@
  *  Licensed under the MIT License. See LICENSE in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as path from 'path';
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  detectDevcontainerFromRequests, extractSkillPathsFromText, createRequest, createSession,
+  assertTrustedPath, detectDevcontainerFromRequests, extractSkillPathsFromText, createRequest, createSession,
   recordFailedFile, recordSkippedLines, getParseWarningCounts, getParseWarnings, resetParseWarnings,
 } from './parser-shared';
 import { SessionRequest } from './types';
@@ -44,6 +45,20 @@ function makeReq(overrides: Partial<SessionRequest> = {}): SessionRequest {
     ...overrides,
   };
 }
+
+describe('trusted parser paths', () => {
+  it('allows configured OpenCode data roots outside the home directory', () => {
+    const previous = process.env.XDG_DATA_HOME;
+    const configuredRoot = path.join(path.parse(process.cwd()).root, 'configured-opencode-data');
+    process.env.XDG_DATA_HOME = configuredRoot;
+    try {
+      expect(() => assertTrustedPath(path.join(configuredRoot, 'opencode', 'opencode.db'))).not.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = previous;
+    }
+  });
+});
 
 describe('parse-warning collector', () => {
   beforeEach(() => resetParseWarnings());

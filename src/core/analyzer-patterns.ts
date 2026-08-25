@@ -469,11 +469,7 @@ export class PatternsAnalyzer extends AnalyzerBase {
   private getEstimatedProjectLoc(reqs: SessionRequest[]): number {
     let estimatedLoc = 0;
     for (const request of reqs) {
-      estimatedLoc += request.aiCode.reduce((sum, block) => sum + block.loc, 0);
-      const editLocs = this.editLocIndex.get(request.requestId);
-      if (editLocs) {
-        for (const loc of editLocs.values()) estimatedLoc += loc.added;
-      }
+      estimatedLoc += this.requestLoc(request);
     }
     return estimatedLoc;
   }

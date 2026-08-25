@@ -189,7 +189,11 @@ function makeInitialContentResolver(state: EditState, stateDir: string): Initial
 
 /** Parses an edit-state JSON payload and accumulates AI-produced LoC into `editLocIndex`. */
 export function parseEditState(raw: string, editLocIndex: ParseContext['editLocIndex'], stateDir: string): void {
-  if (!raw.includes('"textEdit"') && !raw.includes('"create"') && !raw.includes('"delete"')) return;
+  if (!raw.includes('"textEdit"')
+      && !raw.includes('"create"')
+      && !raw.includes('"delete"')
+      && !raw.includes('"rename"')
+      && !raw.includes('"notebookEdit"')) return;
   let state: EditState;
   try { state = JSON.parse(raw) as EditState; } catch (e) {
     warnCore('parser-vscode', `Corrupt state payload in ${stateDir}`, e);
@@ -260,7 +264,7 @@ export function processWorkspaceEntry(
 
   if (isCLI) {
     const eventsFile = path.join(entryPath, 'events.jsonl');
-    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes);
+    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
     if (cliSession) {
       sessions.push(cliSession);
       sessionSourceIndex.set(cliSession.sessionId, {
@@ -291,7 +295,7 @@ export function processWorkspaceEntry(
   }
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
-  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes);
+  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
   if (cliSession) {
     sessions.push(cliSession);
     sessionSourceIndex.set(cliSession.sessionId, {
@@ -343,6 +347,7 @@ export async function processWorkspaceEntryAsync(
           total,
         });
       },
+      editLocIndex,
     );
     if (cliSession) {
       sessions.push(cliSession);
@@ -401,7 +406,7 @@ export async function processWorkspaceEntryAsync(
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
   const tCli = Date.now();
-  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes);
+  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
   addParseTiming('cli', Date.now() - tCli);
   if (cliSession) {
     stripSingleSession(cliSession);

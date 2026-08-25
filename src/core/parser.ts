@@ -232,6 +232,81 @@ type ReportProgress = (p: Partial<LoadProgress> & { phase: number }) => void;
 
 type CacheHitResult = { result: ParseResult; dirMetas: DirMetas };
 
+const VOLATILE_HARNESS_SET = new Set([
+  'GitHub Copilot App',
+  'GitHub Copilot CLI',
+  'Xcode',
+]);
+
+function isCopilotSessionStateDir(logsDir: string): boolean {
+  return logsDir.includes(path.join('.copilot', 'session-state'))
+    || logsDir.includes(path.join('.copilot', 'history-session-state'));
+}
+
+function hasHostEditUri(files: Map<string, unknown>): boolean {
+  return [...files.keys()].some(file =>
+    /^[A-Za-z][A-Za-z0-9+.-]+:/.test(file) && !/^[A-Za-z]:[\\/]/.test(file),
+  );
+}
+
+/**
+ * External sessions are refreshed independently of the VS Code directory cache. Remove their
+ * prior harness-derived deltas, but retain host-level URI deltas for correlated Claude turns.
+ */
+function removeRefreshableExternalEditLocs(
+  sessions: import('./types').Session[],
+  editLocIndex: EditLocIndex,
+): void {
+  for (const session of sessions) {
+    if (!EXTERNAL_HARNESS_SET.has(session.harness)) continue;
+    for (const request of session.requests) {
+      const files = editLocIndex.get(request.requestId);
+      if (!files) continue;
+      if (session.harness !== 'Claude' || (files.size > 0 && !hasHostEditUri(files))) {
+        editLocIndex.delete(request.requestId);
+      }
+    }
+  }
+}
+
+function removeVolatileHarnessSessions(result: ParseResult): void {
+  const removedSessionIds = new Set<string>();
+  const retainedSessions: import('./types').Session[] = [];
+  for (const session of result.sessions) {
+    if (!VOLATILE_HARNESS_SET.has(session.harness)) {
+      retainedSessions.push(session);
+      continue;
+    }
+    removedSessionIds.add(session.sessionId);
+    for (const request of session.requests) result.editLocIndex.delete(request.requestId);
+  }
+  result.sessions.splice(0, result.sessions.length, ...retainedSessions);
+  for (const sessionId of removedSessionIds) result.sessionSourceIndex.delete(sessionId);
+}
+
+async function collectVolatileHarnesses(
+  logsDirs: string[],
+  result: ParseResult,
+  onProgress?: ProgressCallback,
+): Promise<void> {
+  const { vsCodeDirs, xcodeDirs } = partitionDirs(logsDirs);
+  const { entries } = scanVsCodeDirs(vsCodeDirs.filter(isCopilotSessionStateDir));
+  const ctx: ParseContext = {
+    workspaces: result.workspaces,
+    sessions: result.sessions,
+    editLocIndex: result.editLocIndex,
+    sessionSourceIndex: result.sessionSourceIndex,
+    aiLoc: 0,
+  };
+  for (const { logsDir, dirEntries } of entries) {
+    const harness = harnessFromPath(logsDir);
+    for (const entry of dirEntries) {
+      await processWorkspaceEntryAsync(logsDir, entry.name, harness, ctx);
+    }
+  }
+  await collectXcode(xcodeDirs, result.workspaces, result.sessions, result.editLocIndex, onProgress);
+}
+
 async function reportWorkspaceProgress(
   onProgress: ProgressCallback | undefined,
   progress: { processed: number; totalDirs: number; lastWsName: string; elapsed: number; sessions: number; workspaceKey: string },
@@ -258,6 +333,7 @@ async function reportWorkspaceProgress(
 }
 
 async function tryMemoryCache(
+  logsDirs: string[],
   currentMetas: DirMetas,
   onProgress: ProgressCallback | undefined,
   report: ReportProgress,
@@ -268,17 +344,21 @@ async function tryMemoryCache(
   const { stale, removed } = findStaleDirs(currentMetas, mem.dirMetas);
   if (stale.size !== 0 || removed.size !== 0) return null;
 
+  removeVolatileHarnessSessions(mem.result);
+  removeRefreshableExternalEditLocs(mem.result.sessions, mem.result.editLocIndex);
   mem.result.sessions = mem.result.sessions.filter(s => !EXTERNAL_HARNESS_SET.has(s.harness));
-  await collectExternalHarnesses(mem.result.workspaces, mem.result.sessions, onProgress);
+  await collectVolatileHarnesses(logsDirs, mem.result, onProgress);
+  await collectExternalHarnesses(mem.result.workspaces, mem.result.sessions, mem.result.editLocIndex, onProgress);
   report({
     phase: 1, detail: 'Loaded from memory', pct: pct(1, 1),
     sessions: mem.result.sessions.length,
-    ...computeSessionTotals(mem.result.sessions),
+    ...computeSessionTotals(mem.result.sessions, mem.result.editLocIndex),
   });
   return { result: mem.result, dirMetas: currentMetas };
 }
 
 async function tryDiskCache(
+  logsDirs: string[],
   currentMetas: DirMetas,
   onProgress: ProgressCallback | undefined,
   report: ReportProgress,
@@ -289,13 +369,16 @@ async function tryDiskCache(
   const { stale, removed } = findStaleDirs(currentMetas, cached.dirMetas);
   if (stale.size !== 0 || removed.size !== 0) return null;
 
+  removeVolatileHarnessSessions(cached.result);
+  removeRefreshableExternalEditLocs(cached.result.sessions, cached.result.editLocIndex);
   cached.result.sessions = cached.result.sessions.filter(s => !EXTERNAL_HARNESS_SET.has(s.harness));
-  await collectExternalHarnesses(cached.result.workspaces, cached.result.sessions, onProgress);
+  await collectVolatileHarnesses(logsDirs, cached.result, onProgress);
+  await collectExternalHarnesses(cached.result.workspaces, cached.result.sessions, cached.result.editLocIndex, onProgress);
   setMemoryCache(cached.result, currentMetas);
   report({
     phase: 1, detail: 'Loaded from cache', pct: pct(1, 1),
     sessions: cached.result.sessions.length,
-    ...computeSessionTotals(cached.result.sessions),
+    ...computeSessionTotals(cached.result.sessions, cached.result.editLocIndex),
   });
   return { result: cached.result, dirMetas: currentMetas };
 }
@@ -385,7 +468,7 @@ async function processWorkspaces(
   let processed = 0;
   let lastLocIndex = 0;
   let strippedUpTo = 0;
-  const running = createRunningTotals();
+  const running = createRunningTotals(ctx.editLocIndex);
 
   function foldNewSessions(): void {
     for (; lastLocIndex < ctx.sessions.length; lastLocIndex++) running.add(ctx.sessions[lastLocIndex]);
@@ -471,6 +554,7 @@ async function collectXcode(
   xcodeDirs: string[],
   workspaces: Map<string, Workspace>,
   sessions: import('./types').Session[],
+  editLocIndex: EditLocIndex,
   onProgress?: ProgressCallback,
 ): Promise<void> {
   if (xcodeDirs.length === 0) return;
@@ -478,7 +562,7 @@ async function collectXcode(
   await yieldToLoop();
   for (const xcodeBase of xcodeDirs) {
     try {
-      for (const s of await parseXcodeDatabasesAsync(xcodeBase)) {
+      for (const s of await parseXcodeDatabasesAsync(xcodeBase, editLocIndex)) {
         sessions.push(s);
         if (!workspaces.has(s.workspaceId)) {
           workspaces.set(s.workspaceId, { id: s.workspaceId, name: s.workspaceName, path: xcodeBase });
@@ -494,9 +578,10 @@ async function collectXcode(
 async function collectExternalHarnesses(
   workspaces: Map<string, Workspace>,
   sessions: import('./types').Session[],
+  editLocIndex: EditLocIndex,
   onProgress?: ProgressCallback,
 ): Promise<void> {
-  await collectExternalHarnessesAsync(workspaces, sessions, {
+  await collectExternalHarnessesAsync(workspaces, sessions, editLocIndex, {
     onHarnessStart: (name, index, total, sessionCount) => {
       if (onProgress) onProgress({ phase: 3, detail: name, pct: pct(3, index / total), sessions: sessionCount });
     },
@@ -526,7 +611,7 @@ export function parseAllLogs(logsDirs: string[]): ParseResult {
   }
 
   for (const xcodeBase of xcodeDirs) {
-    for (const s of parseXcodeDatabases(xcodeBase)) {
+    for (const s of parseXcodeDatabases(xcodeBase, editLocIndex)) {
       sessions.push(s);
       if (!workspaces.has(s.workspaceId)) {
         workspaces.set(s.workspaceId, { id: s.workspaceId, name: s.workspaceName, path: xcodeBase });
@@ -534,7 +619,7 @@ export function parseAllLogs(logsDirs: string[]): ParseResult {
     }
   }
 
-  collectExternalHarnessesSync(workspaces, sessions);
+  collectExternalHarnessesSync(workspaces, sessions, editLocIndex);
 
   stripSessionsForMemory(sessions);
   return { workspaces, sessions, editLocIndex, sessionSourceIndex };
@@ -567,12 +652,12 @@ export async function parseAllLogsAsyncDetailed(
   await yieldToLoop();
   const currentMetas = await computeDirMetasAsync(logsDirs);
 
-  const memoryHit = await tryMemoryCache(currentMetas, onProgress, report);
+  const memoryHit = await tryMemoryCache(logsDirs, currentMetas, onProgress, report);
   if (memoryHit) return memoryHit;
 
   report({ phase: 1, detail: 'Loading disk cache', pct: pct(1, 0.5) });
   await yieldToLoop();
-  const diskHit = await tryDiskCache(currentMetas, onProgress, report);
+  const diskHit = await tryDiskCache(logsDirs, currentMetas, onProgress, report);
   if (diskHit) return diskHit;
 
   const cached = await loadCacheData();
@@ -582,13 +667,17 @@ export async function parseAllLogsAsyncDetailed(
     const affectedWsIds = new Set<string>();
     for (const fullPath of [...stale, ...removed]) affectedWsIds.add(path.basename(fullPath));
 
+    removeVolatileHarnessSessions(cached.result);
     const { workspaces, sessions: cachedSessions, editLocIndex, sessionSourceIndex } = cached.result;
     const staleRequestIds = new Set<string>();
+    removeRefreshableExternalEditLocs(cachedSessions, editLocIndex);
     const freshSessions: import('./types').Session[] = [];
     const freshSessionSourceIndex = new Map<string, SessionSource>();
     for (const s of cachedSessions) {
       if (affectedWsIds.has(s.workspaceId) || EXTERNAL_HARNESS_SET.has(s.harness)) {
-        for (const r of s.requests) staleRequestIds.add(r.requestId);
+        for (const r of s.requests) {
+          if (affectedWsIds.has(s.workspaceId)) staleRequestIds.add(r.requestId);
+        }
       } else {
         freshSessions.push(s);
         const source = sessionSourceIndex.get(s.sessionId);
@@ -626,7 +715,7 @@ export async function parseAllLogsAsyncDetailed(
       detail: `Updating ${stalePaths.length} changed workspace(s)`,
       pct: pct(2, 0),
       sessions: freshSessions.length,
-      ...computeSessionTotals(freshSessions),
+      ...computeSessionTotals(freshSessions, editLocIndex),
       workspacePlan: stalePlan,
     });
 
@@ -642,9 +731,13 @@ export async function parseAllLogsAsyncDetailed(
       }
     }
 
-    const { xcodeDirs } = partitionDirs(logsDirs);
-    await collectXcode(xcodeDirs, workspaces, freshSessions, onProgress);
-    await collectExternalHarnesses(workspaces, freshSessions, onProgress);
+    await collectVolatileHarnesses(logsDirs, {
+      workspaces,
+      sessions: freshSessions,
+      editLocIndex,
+      sessionSourceIndex: freshSessionSourceIndex,
+    }, onProgress);
+    await collectExternalHarnesses(workspaces, freshSessions, editLocIndex, onProgress);
 
     const result: ParseResult = { workspaces, sessions: freshSessions, editLocIndex, sessionSourceIndex: freshSessionSourceIndex };
     stripSessionsForMemory(result.sessions);
@@ -666,8 +759,8 @@ export async function parseAllLogsAsyncDetailed(
 
   await processWorkspaces(entries, totalDirs, ctx, onProgress);
 
-  await collectXcode(xcodeDirs, workspaces, sessions, onProgress);
-  await collectExternalHarnesses(workspaces, sessions, onProgress);
+  await collectXcode(xcodeDirs, workspaces, sessions, editLocIndex, onProgress);
+  await collectExternalHarnesses(workspaces, sessions, editLocIndex, onProgress);
 
   const result: ParseResult = { workspaces, sessions, editLocIndex, sessionSourceIndex };
   stripSessionsForMemory(result.sessions);

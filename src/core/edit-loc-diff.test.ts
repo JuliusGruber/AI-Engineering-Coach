@@ -401,6 +401,82 @@ describe('accumulateEditLoc', () => {
     expect(addedFor(index, 'r2', URI)).toBe(1);
   });
 
+  it('excludes operations at or after currentEpoch after undo', () => {
+    const timeline: EditTimelineLike = {
+      currentEpoch: 2,
+      operations: [
+        uriOp(URI, 'r1', 1, wholeFile('a\nb')),
+        uriOp(URI, 'r2', 2, wholeFile('a\nb\nundone')),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+
+    expect(addedFor(index, 'r1', URI)).toBe(2);
+    expect(index.has('r2')).toBe(true);
+    expect(index.get('r2')?.size).toBe(0);
+  });
+
+  it('carries file state across a rename before a later text edit', () => {
+    const renamed = 'file:///project/src/renamed.ts';
+    const timeline: EditTimelineLike = {
+      fileBaselines: [baseline(URI, 'r1', 'a\nb')],
+      operations: [
+        {
+          type: 'rename', requestId: 'r1', epoch: 1,
+          uri: { external: URI },
+          oldUri: { external: URI },
+          newUri: { external: renamed },
+        },
+        uriOp(renamed, 'r1', 2, wholeFile('a\nb\nc')),
+      ],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+
+    expect(addedFor(index, 'r1', renamed)).toBe(1);
+  });
+
+  it('counts source lines for inserted notebook cells but ignores output-only edits', () => {
+    const notebook = 'file:///project/notebook.ipynb';
+    const timeline: EditTimelineLike = {
+      operations: [{
+        type: 'notebookEdit',
+        requestId: 'r1',
+        uri: { external: notebook },
+        epoch: 1,
+        cellEdits: [
+          { editType: 1, count: 0, cells: [{ source: 'a\nb' }, { source: 'c' }] },
+          { editType: 1, count: 1, cells: [{ source: 'replacement\ncell' }] },
+          { editType: 2 },
+        ],
+      }],
+    };
+    const index = newIndex();
+    accumulateEditLoc(timeline, index);
+
+    expect(addedFor(index, 'r1', notebook)).toBe(5);
+  });
+
+  it('records rename-only requests as authoritative zero LoC', () => {
+    const renamed = 'file:///project/src/renamed.ts';
+    const timeline: EditTimelineLike = {
+      operations: [{
+        type: 'rename',
+        requestId: 'r1',
+        epoch: 1,
+        uri: { external: URI },
+        oldUri: { external: URI },
+        newUri: { external: renamed },
+      }],
+    };
+    const index = newIndex();
+
+    accumulateEditLoc(timeline, index);
+
+    expect(index.get('r1')).toEqual(new Map());
+  });
+
   it('counts small ranged edits (Anthropic-style) as the number of touched lines', () => {
     const prev = 'a\nb\nc';
     const timeline: EditTimelineLike = {
@@ -539,7 +615,7 @@ describe('accumulateEditLoc', () => {
     };
     const index = newIndex();
     accumulateEditLoc(timeline, index);
-    expect(index.size).toBe(0);
+    expect(index.get('r1')?.size).toBe(0);
   });
 
   it('preserves CRLF hashing behavior for ranged edits', () => {
@@ -617,14 +693,14 @@ describe('accumulateEditLoc', () => {
     expect(index.size).toBe(0);
   });
 
-  it('contributes nothing (and creates no entry) for an op with no edits', () => {
+  it('records an authoritative empty request for an op with no edits', () => {
     const timeline: EditTimelineLike = {
       fileBaselines: [baseline(URI, 'r1', 'a\nb\nc')],
       operations: [uriOp(URI, 'r1', 1, [])],
     };
     const index = newIndex();
     accumulateEditLoc(timeline, index);
-    expect(index.size).toBe(0);
+    expect(index.get('r1')?.size).toBe(0);
   });
 
   it('does nothing for an empty or missing timeline', () => {

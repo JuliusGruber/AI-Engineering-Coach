@@ -30,6 +30,10 @@ export class ProductionAnalyzer extends AnalyzerBase {
     const dailyHarnessRemoved = new Map<string, Map<string, number>>();
 
     for (const request of reqs) {
+      // Exact edit telemetry replaces code blocks for that request. CLI parsers historically
+      // synthesized tool payloads as fenced blocks, while correlated VS Code/Claude turns can
+      // expose both representations of the same edit.
+      if (this.editLocIndex.has(request.requestId)) continue;
       const day = toDateStr(request.timestamp!);
       const session = this.requestSessionMap.get(request);
       const workspaceName = session?.workspaceName || '';
