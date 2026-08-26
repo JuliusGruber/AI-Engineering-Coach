@@ -332,7 +332,7 @@
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.62.1",
     "@types/node": "26.2.0",
-    "@types/vscode": "1.134.0",
+    "@types/vscode": "1.125.0",
     "@vitest/coverage-v8": "4.1.11",
     "@vscode/vsce": "3.9.2",
     "cspell": "10.1.0",
