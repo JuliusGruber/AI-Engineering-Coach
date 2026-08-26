@@ -9,7 +9,16 @@ import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import { reconstructFromJsonl } from './parser-vscode-files';
 import { parseCLIEventsFile } from './parser-vscode-cli';
-import { parseSessionFile, harnessFromPath, findVsCodeDirs, scanVsCodeDirs, parseEditState } from './parser-vscode';
+import {
+  parseSessionFile,
+  harnessFromPath,
+  findVsCodeDirs,
+  scanVsCodeDirs,
+  parseEditState,
+  processWorkspaceEntry,
+  processWorkspaceEntryAsync,
+} from './parser-vscode';
+import { getParseWarningCounts, type ParseContext, resetParseWarnings } from './parser-shared';
 
 function withTempFile(name: string, content: string, run: (filePath: string) => void): void {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-'));
@@ -611,6 +620,48 @@ describe('scanVsCodeDirs', () => {
     const { entries, totalDirs } = scanVsCodeDirs(['/nonexistent/path']);
     expect(totalDirs).toBe(0);
     expect(entries).toHaveLength(0);
+  });
+});
+
+describe('scanVsCodeDirs — Copilot session state', () => {
+  it('only includes Copilot session-state directories that contain events', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-cli-scan-'));
+    const logsDir = path.join(root, '.copilot', 'session-state');
+    try {
+      fs.mkdirSync(path.join(logsDir, 'with-events'), { recursive: true });
+      fs.mkdirSync(path.join(logsDir, 'without-events'));
+      fs.writeFileSync(path.join(logsDir, 'with-events', 'events.jsonl'), '');
+
+      const { entries, totalDirs } = scanVsCodeDirs([logsDir]);
+
+      expect(totalDirs).toBe(1);
+      expect(entries[0].dirEntries.map(entry => entry.name)).toEqual(['with-events']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not count a missing optional VS Code events file as skipped', async () => {
+    const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-vscode-scan-'));
+    const makeContext = (): ParseContext => ({
+      workspaces: new Map(),
+      sessions: [],
+      editLocIndex: new Map(),
+      sessionSourceIndex: new Map(),
+      aiLoc: 0,
+    });
+    try {
+      fs.mkdirSync(path.join(logsDir, 'workspace'));
+      resetParseWarnings();
+
+      processWorkspaceEntry(logsDir, 'workspace', 'Local Agent', makeContext());
+      await processWorkspaceEntryAsync(logsDir, 'workspace', 'Local Agent', makeContext());
+
+      expect(getParseWarningCounts().skippedFiles).toBe(0);
+    } finally {
+      resetParseWarnings();
+      fs.rmSync(logsDir, { recursive: true, force: true });
+    }
   });
 });
 

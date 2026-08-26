@@ -51,6 +51,9 @@ body { background: var(--vscode-editor-background); color: var(--vscode-editor-f
       <li class="nav-group-header">Explore</li>
       <li><a href="#" data-page="data-explorer"><span class="nav-icon">&#9776;</span> Data Explorer</a></li>
       <li><a href="#" data-page="rule-playground"><span class="nav-icon">&#9881;</span> Rule Playground</a></li>
+      <li class="nav-group-header github-app-nav-item" hidden>GitHub App</li>
+      <li class="github-app-nav-item" hidden><a href="#" data-page="github-app"><span class="nav-icon">&#9670;</span> Productivity<span class="nav-badge" id="badge-github-app"></span></a></li>
+      <li class="github-app-nav-item" hidden><a href="#" data-page="github-app-issue-credits"><span class="nav-icon">$</span> Issue credits<span class="nav-badge" id="badge-github-app-issue-credits"></span></a></li>
     </ul>
     <div class="sidebar-filters">
       <div class="sidebar-filter">
@@ -140,6 +143,46 @@ function getMockData(method, params) {
     getWorkspaceBreakdown: () => ({
       labels: ['my-api', 'frontend-app', 'data-pipeline', 'mobile-sdk', 'infra-tools'],
       values: [980, 720, 510, 401, 230]
+    }),
+
+    getGitHubAppMetrics: () => {
+      const appState = new URLSearchParams(window.location.search).get('githubApp');
+      if (appState === 'absent') return { status: 'absent' };
+      if (appState === 'unavailable') return { status: 'unavailable' };
+      return {
+        status: 'ready',
+        metrics: {
+          totalProjectSessions: 42,
+          sessionsWithIssue: 17,
+          sessionsWithPullRequest: 26,
+          sessionsWithMergedPullRequest: 18,
+          lastActivityAt: '2026-05-03T14:20:00.000Z',
+          mergeHistory: [
+            ['2026-04-27', 5, 3], ['2026-04-28', 3, 2], ['2026-04-29', 0, 0],
+            ['2026-04-30', 6, 5], ['2026-05-01', 2, 1], ['2026-05-02', 4, 3],
+            ['2026-05-03', 5, 4]
+          ].map(([date, pullRequestsRaised, pullRequestsMerged]) => ({
+            date,
+            pullRequestsRaised,
+            pullRequestsMerged
+          }))
+        }
+      };
+    },
+
+    getGitHubAppIssueCredits: () => ({
+      status: 'ready',
+      metrics: {
+        issues: [
+          { repository: 'microsoft/AI-Engineering-Coach', issueNumber: 314, linkedSessionCount: 6, pricedSessionCount: 6, estimatedCredits: 184.72 },
+          { repository: 'microsoft/AI-Engineering-Coach', issueNumber: 287, linkedSessionCount: 4, pricedSessionCount: 3, estimatedCredits: 96.4 },
+          { repository: 'octo-org/service-api', issueNumber: 91, linkedSessionCount: 3, pricedSessionCount: 3, estimatedCredits: 58.11 },
+          { repository: 'octo-org/web-client', issueNumber: 204, linkedSessionCount: 2, pricedSessionCount: 2, estimatedCredits: 21.08 }
+        ],
+        linkedSessionCount: 15,
+        pricedSessionCount: 14,
+        estimatedCredits: 360.31
+      }
     }),
 
     getCodeProduction: () => ({

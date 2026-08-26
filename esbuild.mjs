@@ -113,6 +113,8 @@ if (fs.existsSync(metricsSrc)) {
 const cssSources = [
   'src/webview/styles.css',
   'src/webview/styles-pages.css',
+  'src/webview/styles-github-app.css',
+  'src/webview/styles-github-app-issue-credits.css',
   'src/webview/styles-skills.css',
   'src/webview/styles-learning.css',
 ];

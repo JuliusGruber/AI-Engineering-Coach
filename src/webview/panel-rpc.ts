@@ -8,6 +8,9 @@
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { loadSessionFromDisk } from '../core/cache';
+import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+import { loadGitHubAppMetrics } from '../core/github-app-analytics';
+import { loadGitHubAppIssueCredits } from '../core/github-app-issue-credits';
 import { extractSessionImages } from '../core/parser-vscode-files';
 import { DateFilter, RpcMethodName, BurndownConfig } from '../core/types';
 import type { RpcMethodMap, RpcResult } from '../core/types/rpc-types';
@@ -39,7 +42,6 @@ import { compileNaturalLanguageRule } from '../core/rule-compiler';
 import type { SessionRequest, Session } from '../core/types';
 import { errorResult, isString, isNumber, isOptionalString, isRecord } from './panel-shared';
 import { DSL_CHEATSHEET } from './dsl-cheatsheet';
-import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
 import { getRequestLoc } from '../core/analyzer-base';
 import type { EditLocIndex } from '../core/edit-loc-diff';
 
@@ -725,6 +727,8 @@ const rpcHandlers: TypedRpcHandlers = {
   getParserPreview: (a, _p, params) => a.getParserPreview(typeof params?.focusField === 'string' ? params.focusField : undefined),
   getWorkflowOptimization: (a, _p, params) => a.getWorkflowOptimization(validateDateFilter(params)),
   getStats: (a, _p, params) => a.getStats(validateDateFilter(params)),
+  getGitHubAppMetrics: () => loadGitHubAppMetrics(),
+  getGitHubAppIssueCredits: () => loadGitHubAppIssueCredits(),
   getConfigHealth: (a, _p, params) => a.getConfigHealth(validateDateFilter(params)),
   getInsights: (a, _p, params) => a.getInsights(validateDateFilter(params)),
   getFlowState: (a, _p, params) => a.getFlowState(validateDateFilter(params)),

@@ -158,6 +158,25 @@ A few features depend on the local VS Code language model and are hidden in canv
 | **Burndown** | Monthly AI token budget progress with projections _(temporarily disabled)_                  |
 | **Patterns** | 7×24 activity heatmap and work-life balance signals                                         |
 
+### GitHub App
+
+This section appears only when the local GitHub Copilot app is installed.
+
+| Page              | Description                                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Productivity**  | Project sessions with and without issues, pull request and merge conversion, and a seven-day PR merge-ratio trend |
+| **Issue credits** | Rough relative AI spend per GitHub issue across linked workspace, alias, creator, and coordinating sessions       |
+
+Issue credit percentages are rough relative estimates, not accurate AI Credit or billing figures.
+They normalize the locally recorded `total_nano_aiu` usage across linked issues to show approximately
+where AI usage was spent. The percentages depend on issue links inferred from local workspace and
+issue-reference data and must not be used for billing reconciliation. Explicit GitHub issue URLs
+pasted in either of the first two session turns also establish the issue link; URLs pasted later are
+excluded to avoid treating research links as the session's source issue. All reconciliation and
+aggregation is local and read-only. The small organization avatars on this page are loaded directly
+from GitHub using the repository owner name; no session content or usage data is included in these
+image requests.
+
 ### Improve
 
 | Page                | Description                                                                                                                                |

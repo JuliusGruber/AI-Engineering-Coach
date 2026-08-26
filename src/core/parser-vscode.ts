@@ -72,7 +72,11 @@ export function scanVsCodeDirs(logsDirs: string[]): {
   for (const logsDir of logsDirs) {
     try {
       const all = fs.readdirSync(logsDir, { withFileTypes: true });
-      const dirs = all.filter(e => e.isDirectory());
+      const isCliSessionState = harnessFromPath(logsDir) === 'GitHub Copilot CLI';
+      const dirs = all.filter(e =>
+        e.isDirectory() &&
+        (!isCliSessionState || fs.existsSync(path.join(logsDir, e.name, 'events.jsonl'))),
+      );
       totalDirs += dirs.length;
       entries.push({ logsDir, dirEntries: dirs });
     } catch (e) {
@@ -152,6 +156,10 @@ function listEditStateFiles(esDir: string): string[] {
   } catch {
     return [];
   }
+}
+
+function sessionFileExists(filePath: string): boolean {
+  return prefetchCache.has(filePath) || fs.existsSync(filePath);
 }
 
 type EditState = {
@@ -295,16 +303,18 @@ export function processWorkspaceEntry(
   }
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
-  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
-  if (cliSession) {
-    sessions.push(cliSession);
-    sessionSourceIndex.set(cliSession.sessionId, {
-      kind: 'cli-events',
-      filePath: eventsFile,
-      workspaceId: wsId,
-      workspaceName: wsName,
-      harness,
-    });
+  if (sessionFileExists(eventsFile)) {
+    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
+    if (cliSession) {
+      sessions.push(cliSession);
+      sessionSourceIndex.set(cliSession.sessionId, {
+        kind: 'cli-events',
+        filePath: eventsFile,
+        workspaceId: wsId,
+        workspaceName: wsName,
+        harness,
+      });
+    }
   }
 
   const esDir = path.join(entryPath, 'chatEditingSessions');
@@ -405,19 +415,21 @@ export async function processWorkspaceEntryAsync(
   }
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
-  const tCli = Date.now();
-  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
-  addParseTiming('cli', Date.now() - tCli);
-  if (cliSession) {
-    stripSingleSession(cliSession);
-    sessions.push(cliSession);
-    sessionSourceIndex.set(cliSession.sessionId, {
-      kind: 'cli-events',
-      filePath: eventsFile,
-      workspaceId: wsId,
-      workspaceName: wsName,
-      harness,
-    });
+  if (sessionFileExists(eventsFile)) {
+    const tCli = Date.now();
+    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
+    addParseTiming('cli', Date.now() - tCli);
+    if (cliSession) {
+      stripSingleSession(cliSession);
+      sessions.push(cliSession);
+      sessionSourceIndex.set(cliSession.sessionId, {
+        kind: 'cli-events',
+        filePath: eventsFile,
+        workspaceId: wsId,
+        workspaceName: wsName,
+        harness,
+      });
+    }
   }
 
   for (let i = 0; i < editStateFiles.length; i++) {
