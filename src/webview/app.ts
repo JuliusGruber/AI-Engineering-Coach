@@ -5,7 +5,7 @@
 
 /* Webview entry -- runs in the browser context inside the VS Code webview */
 
-import { AntiPatternData, DateFilter, StatsResult } from '../core/types';
+import { AntiPatternData, DateFilter, GitHubAppSnapshot, StatsResult } from '../core/types';
 import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
 import { $, $$, rpc, destroyCharts, initMessageListener, withErrorBoundary, type WorkerTelemetry } from './shared';
 import { updateTelemetry } from './telemetry-strip';
@@ -27,9 +27,12 @@ import { renderLevelUp } from './page-experiments';
 import { renderDataExplorer } from './page-data-explorer';
 import { renderRulePlayground } from './page-rule-playground';
 import { renderImageGallery } from './page-image-gallery';
+import { renderGitHubApp } from './page-github-app';
 
+let githubAppSnapshot: GitHubAppSnapshot = { status: 'absent' };
 function normalizePageForFeatureFlags(page: string): string {
   if (!FF_TOKEN_REPORTING_ENABLED && page === 'burndown') return 'dashboard';
+  if (githubAppSnapshot.status === 'absent' && page === 'github-app') return 'dashboard';
   return page;
 }
 
@@ -63,6 +66,13 @@ function setBadge(id: string, value: string | number): void {
   el.classList.add('visible');
 }
 
+function clearBadge(id: string): void {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = '';
+  el.classList.remove('visible');
+}
+
 /** Exported so pages (e.g. Skill Finder) can update their badge after async work. */
 export function updateNavBadge(id: string, value: string | number): void { setBadge(id, value); }
 
@@ -84,6 +94,23 @@ function refreshNavBadges(filter: DateFilter): void {
     setBadge('badge-output', label);
   }).catch(() => {});
 
+}
+
+function applyGitHubAppSnapshot(snapshot: GitHubAppSnapshot): void {
+  githubAppSnapshot = snapshot;
+  const visible = snapshot.status !== 'absent';
+  for (const item of $$<HTMLElement>('.github-app-nav-item')) item.hidden = !visible;
+  if (snapshot.status === 'ready') setBadge('badge-github-app', snapshot.metrics.totalProjectSessions);
+  else clearBadge('badge-github-app');
+  if (!visible && currentPage === 'github-app') navigateTo('dashboard');
+}
+
+async function refreshGitHubAppSnapshot(): Promise<void> {
+  try {
+    applyGitHubAppSnapshot(await rpc<GitHubAppSnapshot>('getGitHubAppMetrics'));
+  } catch {
+    applyGitHubAppSnapshot({ status: 'unavailable' });
+  }
 }
 
 /* ---- Progress + Data Ready ---- */
@@ -315,7 +342,7 @@ function onDataReady(currentWorkspace: string, skipped?: { skippedFiles: number;
     }
   }).catch(() => {});
 
-  void loadCapabilities().finally(() => {
+  void Promise.allSettled([refreshGitHubAppSnapshot(), loadCapabilities()]).then(() => {
     navigateTo(currentPage);
     refreshNavBadges(currentFilter);
     maybeShowSkippedBanner();
@@ -358,6 +385,7 @@ export function navigateTo(page: string): void {
   page = normalizePageForFeatureFlags(page);
   if (!llmAvailable() && (page === 'skills' || page === 'level-up')) page = 'dashboard';
   currentPage = page;
+  document.body.classList.toggle('github-app-view', page === 'github-app');
   for (const a of $$<HTMLAnchorElement>('.nav-links a')) a.classList.toggle('active', a.dataset.page === page);
   void renderPage(page);
 }
@@ -544,6 +572,7 @@ function renderPage(page: string): void {
     case 'data-explorer': withErrorBoundary('Data Explorer', content, () => renderDataExplorer(content, currentFilter)); break;
     case 'rule-playground': withErrorBoundary('Rule Playground', content, () => renderRulePlayground(content, currentFilter)); break;
     case 'image-gallery': withErrorBoundary('Image Gallery', content, () => renderImageGallery(content, currentFilter)); break;
+    case 'github-app': withErrorBoundary('GitHub App', content, () => renderGitHubApp(content, githubAppSnapshot)); break;
     default: render(html`<p>Unknown page</p>`, content);
   }
 }

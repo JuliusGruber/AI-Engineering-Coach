@@ -23,7 +23,7 @@ export function isErrorResult(v: unknown): v is ErrorResult {
   return typeof v === 'object' && v !== null && typeof (v as { error?: unknown }).error === 'string';
 }
 
-import type { DateFilter, Session } from './session-types';
+import type { ImageGalleryData } from '../analyzer-images';
 import type {
   AiCreditBurndownData,
   AiCreditData,
@@ -51,7 +51,8 @@ import type {
 import type { ConfigHealthData } from './config-types';
 import type { InsightsData } from './insights-types';
 import type { ContextManagementData, FlowStateData, WorkspaceContextSessionsData } from './context-types';
-import type { ImageGalleryData } from '../analyzer-images';
+import type { GitHubAppSnapshot } from './github-app-types';
+import type { DateFilter, Session } from './session-types';
 
 /* RPC method map: method name -> { params, result } */
 export interface RpcMethodMap {
@@ -78,6 +79,7 @@ export interface RpcMethodMap {
   getParserPreview: { params: { focusField?: string } | undefined; result: ParserPreviewData };
   getWorkflowOptimization: { params: DateFilter | undefined; result: WorkflowOptimizationData };
   getStats: { params: DateFilter | undefined; result: StatsResult };
+  getGitHubAppMetrics: { params: undefined; result: GitHubAppSnapshot };
   getConfigHealth: { params: DateFilter | undefined; result: ConfigHealthData };
   getInsights: { params: DateFilter | undefined; result: InsightsData };
   getFlowState: { params: DateFilter | undefined; result: FlowStateData };
