@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, it, expect } from 'vitest';
+import { EditLocIndex } from './edit-loc-diff';
 import { findCodexDirs, parseCodexSessions } from './parser-codex';
 import { MAX_FILE_SIZE } from './parser-shared';
 
@@ -25,6 +26,90 @@ function withCodexFile(lines: object[], run: (sessionsDir: string, filePath: str
 }
 
 describe('parseCodexSessions', () => {
+  it('captures current custom_tool_call apply_patch deltas', () => {
+    withCodexFile([
+      { type: 'session_meta', payload: { id: 'sess-codex-patch', cwd: '/Users/me/proj' } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:00Z',
+        payload: { role: 'user', type: 'message', content: [{ type: 'input_text', text: 'patch it' }] } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:01Z',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call-success',
+          name: 'apply_patch',
+          input: [
+            '*** Begin Patch',
+            '*** Add File: src/new.ts',
+            '+export const one = 1;',
+            '+export const two = 2;',
+            '*** End Patch',
+          ].join('\n'),
+        } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:02Z',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call-success',
+          output: { body: 'patch applied', success: true },
+        } },
+    ], (sessionsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const session = parseCodexSessions(sessionsDir, editLocIndex)[0];
+      const request = session.requests[0];
+
+      expect(request.toolsUsed).toContain('apply_patch');
+      expect(request.editedFiles).toEqual(['src/new.ts']);
+      expect(editLocIndex.get('sess-codex-patch:codex:0')?.get('src/new.ts'))
+        .toEqual({ added: 2, removed: 0 });
+    });
+  });
+
+  it('excludes apply_patch deltas when the custom tool output reports failure', () => {
+    withCodexFile([
+      { type: 'session_meta', payload: { id: 'sess-codex-failed', cwd: '/Users/me/proj' } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:00Z',
+        payload: { role: 'user', type: 'message', content: [{ type: 'input_text', text: 'patch it' }] } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:01Z',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call-failed',
+          name: 'apply_patch',
+          input: '*** Begin Patch\n*** Add File: src/new.ts\n+new\n*** End Patch',
+        } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:02Z',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call-failed',
+          output: { body: 'patch failed', success: false },
+        } },
+    ], (sessionsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const request = parseCodexSessions(sessionsDir, editLocIndex)[0].requests[0];
+
+      expect(request.editedFiles).toEqual([]);
+      expect(editLocIndex.size).toBe(0);
+    });
+  });
+
+  it('excludes correlated apply_patch calls without a tool output', () => {
+    withCodexFile([
+      { type: 'session_meta', payload: { id: 'sess-codex-incomplete', cwd: '/Users/me/proj' } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:00Z',
+        payload: { role: 'user', type: 'message', content: [{ type: 'input_text', text: 'patch it' }] } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:01Z',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call-incomplete',
+          name: 'apply_patch',
+          input: '*** Begin Patch\n*** Add File: src/new.ts\n+new\n*** End Patch',
+        } },
+    ], (sessionsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const request = parseCodexSessions(sessionsDir, editLocIndex)[0].requests[0];
+
+      expect(request.editedFiles).toEqual([]);
+      expect(editLocIndex.size).toBe(0);
+    });
+  });
+
   it('exposes final cumulative token_count totals as Session.modelUsage', () => {
     withCodexFile([
       { type: 'session_meta', payload: { id: 'sess-codex-1', cwd: '/Users/me/proj' } },

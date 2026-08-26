@@ -47,6 +47,24 @@ describe('computeSessionTotals', () => {
     const b = session([createRequest({ messageText: '', responseText: '', editedFiles: ['x.ts', 'y.ts'] })]);
     expect(computeSessionTotals([a, b]).filesEdited).toBe(2);
   });
+
+  it('uses exact edit LoC instead of synthetic code blocks when available', () => {
+    const request = createRequest({
+      requestId: 'exact',
+      messageText: '',
+      responseText: '',
+      aiCode: [{ language: 'ts', loc: 20 }],
+    });
+    const editLocIndex = new Map([
+      ['exact', new Map([['file:///app.ts', { added: 3, removed: 1 }]])],
+    ]);
+
+    expect(computeSessionTotals([session([request])], editLocIndex).linesOfCode).toBe(3);
+
+    const running = createRunningTotals(editLocIndex);
+    running.add(session([request]));
+    expect(running.snapshot().linesOfCode).toBe(3);
+  });
 });
 
 describe('createRunningTotals', () => {

@@ -4,7 +4,29 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { describe, it, expect } from 'vitest';
-import { fileUriToPath, toDateStr, startOfDay, endOfDay, isoWeek, normalizeModel, modelMultiplier, classifyWorkType } from './helpers';
+import { fileUriToPath, toDateStr, startOfDay, endOfDay, isoWeek, normalizeModel, modelMultiplier, classifyWorkType, languageFromFile } from './helpers';
+
+describe('languageFromFile', () => {
+  it('maps a known extension to the same label fenced code blocks use', () => {
+    expect(languageFromFile('file:///C:/repo/src/core/parser.ts')).toBe('typescript');
+    expect(languageFromFile('src\\core\\notes.md')).toBe('markdown');
+  });
+  it('uses the same canonical labels as fenced code blocks', () => {
+    expect(languageFromFile('scripts/deploy.sh')).toBe('bash');
+    expect(languageFromFile('src/Program.cs')).toBe('csharp');
+    expect(languageFromFile('tsconfig.jsonc')).toBe('json');
+  });
+  it('maps extension-less known filenames', () => {
+    expect(languageFromFile('build/Dockerfile')).toBe('docker');
+  });
+  it('falls back to the bare extension for unknown types', () => {
+    expect(languageFromFile('assets/logo.sketch')).toBe('sketch');
+  });
+  it('returns "unknown" for a file with no usable extension', () => {
+    expect(languageFromFile('LICENSE')).toBe('unknown');
+    expect(languageFromFile('.gitignore')).toBe('unknown');
+  });
+});
 
 describe('fileUriToPath', () => {
   it('converts a Windows file URI', () => {

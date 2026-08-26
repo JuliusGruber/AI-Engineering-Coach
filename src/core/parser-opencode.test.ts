@@ -10,13 +10,16 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, it, expect } from 'vitest';
+import { EditLocIndex } from './edit-loc-diff';
 import { parseOpenCodeSessions } from './parser-opencode';
 
 function withStorage(
   rawSession: object,
   messages: object[],
   run: (storageDir: string) => void,
+  parts: object[] = [],
 ): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-parser-test-'));
   const storageDir = path.join(root, 'storage');
@@ -36,10 +39,223 @@ function withStorage(
       'utf-8',
     );
   }
+  for (const part of parts) {
+    const value = part as { id: string; messageID: string };
+    const partDir = path.join(storageDir, 'part', value.messageID);
+    fs.mkdirSync(partDir, { recursive: true });
+    fs.writeFileSync(path.join(partDir, `${value.id}.json`), JSON.stringify(part), 'utf-8');
+  }
   try { run(storageDir); } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 describe('parseOpenCodeSessions', () => {
+  it('parses current opencode.db session, message, and diff data', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-db-test-'));
+    const dbPath = path.join(root, 'opencode.db');
+    const userData = JSON.stringify({
+      role: 'user',
+      summary: {
+        title: 'update code',
+        diffs: [{ file: 'src/app.ts', additions: 4, deletions: 2, status: 'modified' }],
+      },
+    });
+    const assistantData = JSON.stringify({
+      role: 'assistant',
+      parentID: 'msg_user',
+      modelID: 'claude-sonnet-4',
+      tokens: { input: 100, output: 20 },
+    });
+    const sql = [
+      'CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, slug TEXT, time_created INTEGER, time_updated INTEGER);',
+      'CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);',
+      'CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, message_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);',
+      `INSERT INTO session VALUES ('ses_test', 'project', '/Users/me/proj', 'Project', 'project', 1700000000000, 1700000002000);`,
+      `INSERT INTO message VALUES ('msg_user', 'ses_test', 1700000000000, 1700000000000, ${sqlString(userData)});`,
+      `INSERT INTO message VALUES ('msg_assistant', 'ses_test', 1700000001000, 1700000002000, ${sqlString(assistantData)});`,
+    ].join('\n');
+
+    try {
+      const database = new DatabaseSync(dbPath);
+      database.exec(sql);
+      database.close();
+      const editLocIndex: EditLocIndex = new Map();
+      const sessions = parseOpenCodeSessions(dbPath, editLocIndex);
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].requests[0].messageText).toBe('update code');
+      expect(sessions[0].requests[0].editedFiles).toEqual(['src/app.ts']);
+      expect(editLocIndex.get('msg_user')?.get('src/app.ts')).toEqual({ added: 4, removed: 2 });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses current per-turn summary diffs for exact added and removed LoC', () => {
+    withStorage(
+      { id: 'sess-diff', directory: '/Users/me/proj', time: { created: 1700000000000 } },
+      [
+        {
+          id: 'u1',
+          sessionID: 'sess-diff',
+          role: 'user',
+          time: { created: 1700000000000 },
+          summary: {
+            title: 'update files',
+            diffs: [
+              { file: 'src/app.ts', additions: 3, deletions: 2, status: 'modified' },
+              { file: 'src/new.ts', additions: 5, deletions: 0, status: 'added' },
+            ],
+          },
+        },
+        {
+          id: 'a1', sessionID: 'sess-diff', role: 'assistant', parentID: 'u1',
+          time: { created: 1700000001000, completed: 1700000002000 },
+          modelID: 'claude-sonnet-4',
+          tokens: { input: 100, output: 20 },
+        },
+      ],
+      (storageDir) => {
+        const editLocIndex: EditLocIndex = new Map();
+        const request = parseOpenCodeSessions(storageDir, editLocIndex)[0].requests[0];
+
+        expect(request.editedFiles).toEqual(['src/app.ts', 'src/new.ts']);
+        expect(editLocIndex.get('u1')?.get('src/app.ts')).toEqual({ added: 3, removed: 2 });
+        expect(editLocIndex.get('u1')?.get('src/new.ts')).toEqual({ added: 5, removed: 0 });
+      },
+    );
+  });
+
+  it('excludes structured edits whose tool state reports failure', () => {
+    withStorage(
+      { id: 'sess-failed', directory: '/Users/me/proj', time: { created: 1700000000000 } },
+      [
+        {
+          id: 'u1',
+          sessionID: 'sess-failed',
+          role: 'user',
+          time: { created: 1700000000000 },
+          summary: { title: 'edit file' },
+        },
+        {
+          id: 'a1',
+          sessionID: 'sess-failed',
+          role: 'assistant',
+          parentID: 'u1',
+          time: { created: 1700000001000, completed: 1700000002000 },
+          modelID: 'claude-sonnet-4',
+          tokens: { input: 100, output: 20 },
+        },
+      ],
+      (storageDir) => {
+        const editLocIndex: EditLocIndex = new Map();
+        const request = parseOpenCodeSessions(storageDir, editLocIndex)[0].requests[0];
+
+        expect(request.toolsUsed).toEqual(['edit']);
+        expect(request.editedFiles).toEqual([]);
+        expect(editLocIndex.size).toBe(0);
+      },
+      [{
+        id: 'part-failed',
+        sessionID: 'sess-failed',
+        messageID: 'a1',
+        type: 'tool',
+        tool: 'edit',
+        state: {
+          status: 'error',
+          input: { filePath: 'src/app.ts', old_string: 'old', new_string: 'new' },
+        },
+      }],
+    );
+  });
+
+  it('uses a present empty summary diff as authoritative zero edits', () => {
+    withStorage(
+      { id: 'sess-reverted', directory: '/Users/me/proj', time: { created: 1700000000000 } },
+      [
+        {
+          id: 'u1',
+          sessionID: 'sess-reverted',
+          role: 'user',
+          time: { created: 1700000000000 },
+          summary: { title: 'edit then revert', diffs: [] },
+        },
+        {
+          id: 'a1',
+          sessionID: 'sess-reverted',
+          role: 'assistant',
+          parentID: 'u1',
+          time: { created: 1700000001000, completed: 1700000002000 },
+          modelID: 'claude-sonnet-4',
+          tokens: { input: 100, output: 20 },
+        },
+      ],
+      (storageDir) => {
+        const editLocIndex: EditLocIndex = new Map();
+        const request = parseOpenCodeSessions(storageDir, editLocIndex)[0].requests[0];
+
+        expect(request.editedFiles).toEqual([]);
+        expect(editLocIndex.get('u1')).toEqual(new Map());
+      },
+      [{
+        id: 'part-completed',
+        sessionID: 'sess-reverted',
+        messageID: 'a1',
+        type: 'tool',
+        tool: 'edit',
+        state: {
+          status: 'completed',
+          input: { filePath: 'src/app.ts', old_string: 'old', new_string: 'new' },
+        },
+      }],
+    );
+  });
+
+  it('excludes edits whose tool state is still running', () => {
+    withStorage(
+      { id: 'sess-running', directory: '/Users/me/proj', time: { created: 1700000000000 } },
+      [
+        {
+          id: 'u1',
+          sessionID: 'sess-running',
+          role: 'user',
+          time: { created: 1700000000000 },
+          summary: { title: 'edit file' },
+        },
+        {
+          id: 'a1',
+          sessionID: 'sess-running',
+          role: 'assistant',
+          parentID: 'u1',
+          time: { created: 1700000001000 },
+          modelID: 'claude-sonnet-4',
+          tokens: { input: 100, output: 20 },
+        },
+      ],
+      (storageDir) => {
+        const editLocIndex: EditLocIndex = new Map();
+        const request = parseOpenCodeSessions(storageDir, editLocIndex)[0].requests[0];
+
+        expect(request.editedFiles).toEqual([]);
+        expect(editLocIndex.size).toBe(0);
+      },
+      [{
+        id: 'part-running',
+        sessionID: 'sess-running',
+        messageID: 'a1',
+        type: 'tool',
+        tool: 'edit',
+        state: {
+          status: 'running',
+          input: { filePath: 'src/app.ts', old_string: 'old', new_string: 'new' },
+        },
+      }],
+    );
+  });
+
   it('records {input:0,output:0} assistants as zero-token data, not missing', () => {
     withStorage(
       { id: 'sess1', directory: '/Users/me/proj', time: { created: 1700000000000 } },

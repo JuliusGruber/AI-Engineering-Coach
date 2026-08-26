@@ -15,6 +15,15 @@ import { Session, SessionRequest, CompactionEvent, ModelUsage } from './types';
 import { createRequest, createSession, detectDevcontainerFromRequests, recordFailedFile } from './parser-shared';
 import { forEachJsonlLine, forEachJsonlLineAsync } from './parser-vscode-files';
 import { canonicalizeReasoningEffort, extractReasoningEffortFromModelId, normalizeModel } from './helpers';
+import { EditLocIndex } from './edit-loc-diff';
+import {
+  FileEditLocMap,
+  mergeFileEditLoc,
+  mergeRequestEditLoc,
+  parseApplyPatch,
+  recordContentReplacement,
+  recordCreatedContent,
+} from './edit-tool-diff';
 
 interface CLIEvent {
   type: string;
@@ -49,6 +58,14 @@ interface TurnState {
   compaction: CompactionEvent | null;
   reasoningEffort: 'max' | 'high' | 'medium' | 'low' | null;
   imageCount: number;
+  editLocs: FileEditLocMap;
+  pendingToolEdits: Map<string, PendingToolEdit>;
+}
+
+interface PendingToolEdit {
+  editLocs: FileEditLocMap;
+  editedFiles: Set<string>;
+  codeBlock: string | null;
 }
 
 interface CLIParseState {
@@ -61,6 +78,7 @@ interface CLIParseState {
   sawShutdown: boolean;
   requests: SessionRequest[];
   turn: TurnState | null;
+  editLocIndex?: EditLocIndex;
 }
 
 function freshTurn(userMsg: string, userTs: string | null, agentMode: string, reasoningEffort: 'max' | 'high' | 'medium' | 'low' | null): TurnState {
@@ -82,11 +100,13 @@ function freshTurn(userMsg: string, userTs: string | null, agentMode: string, re
     compaction: null,
     reasoningEffort,
     imageCount: 0,
+    editLocs: new Map(),
+    pendingToolEdits: new Map(),
   };
 }
 
 const FILE_REF_TOOLS = new Set(['view', 'grep', 'glob', 'rg', 'show_file']);
-const FILE_EDIT_TOOLS = new Set(['edit', 'create']);
+const FILE_EDIT_TOOLS = new Set(['edit', 'create', 'apply_patch']);
 const META_TOOLS = new Set(['report_intent']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,17 +150,25 @@ function getTurnEndState(turn: TurnState): 'errored' | undefined {
   return turn.isCanceled && noResponseRecorded ? 'errored' : undefined;
 }
 
+function commitToolEdit(turn: TurnState, edit: PendingToolEdit): void {
+  mergeFileEditLoc(turn.editLocs, edit.editLocs);
+  for (const file of edit.editedFiles) turn.editedFiles.add(file);
+  if (edit.codeBlock) turn.responseChunks.push(edit.codeBlock);
+}
+
 function flushTurn(state: CLIParseState): void {
   const turn = state.turn;
   if (!turn || (turn.responseChunks.length === 0 && turn.toolNames.size === 0 && !turn.isCanceled)) return;
+  turn.pendingToolEdits.clear();
 
   const msgTs = turn.userTs ? new Date(turn.userTs).getTime() : null;
   const respTs = turn.lastAssistantTs ? new Date(turn.lastAssistantTs).getTime() : null;
   const firstProgress = turn.firstToolTs && msgTs ? turn.firstToolTs - msgTs : null;
   const responseText = turn.responseChunks.filter(Boolean).join('\n\n');
 
+  const requestId = turn.lastAssistantId || `${state.sessionId}:cli:${state.requests.length}`;
   state.requests.push(createRequest({
-    requestId: turn.lastAssistantId || `cli-${state.requests.length}`,
+    requestId,
     timestamp: msgTs,
     messageText: turn.userMsg,
     responseText,
@@ -165,6 +193,7 @@ function flushTurn(state: CLIParseState): void {
       ?? extractReasoningEffortFromModelId(turn.modelId || state.currentModelId),
     endState: getTurnEndState(turn),
   }));
+  mergeRequestEditLoc(state.editLocIndex, requestId, turn.editLocs);
 }
 
 function addAttachmentReferences(turn: TurnState, attachments: unknown): void {
@@ -221,13 +250,34 @@ function handleToolExecutionStart(ev: CLIEvent, state: CLIParseState): void {
 
   const data = ev.data || {};
   const toolName = str(data.toolName);
-  const args = recordValue(data.arguments) || {};
+  const rawArgs = data.arguments;
+  const args = recordValue(rawArgs) || {};
   const ts = ev.timestamp ? new Date(ev.timestamp).getTime() : null;
 
   if (ts && turn.firstToolTs === null) turn.firstToolTs = ts;
   if (toolName && !META_TOOLS.has(toolName)) turn.toolNames.add(toolName);
-  if (FILE_EDIT_TOOLS.has(toolName) && typeof args.path === 'string') {
-    turn.editedFiles.add(args.path);
+  const pending: PendingToolEdit = {
+    editLocs: new Map(),
+    editedFiles: new Set(),
+    codeBlock: null,
+  };
+  if (toolName === 'apply_patch') {
+    const patch = typeof rawArgs === 'string'
+      ? rawArgs
+      : str(args.patch) || str(args.input);
+    const patchEdits = parseApplyPatch(patch);
+    mergeFileEditLoc(pending.editLocs, patchEdits);
+    for (const file of patchEdits.keys()) pending.editedFiles.add(file);
+  } else if (FILE_EDIT_TOOLS.has(toolName) && typeof args.path === 'string') {
+    pending.editedFiles.add(args.path);
+    if (toolName === 'create') {
+      const content = str(args.file_text) || str(args.content) || str(args.code);
+      if (content) recordCreatedContent(pending.editLocs, args.path, content);
+    } else if (toolName === 'edit') {
+      const previous = str(args.old_str) || str(args.oldString) || str(args.old_string);
+      const next = str(args.new_str) || str(args.newString) || str(args.new_string);
+      if (previous || next) recordContentReplacement(pending.editLocs, args.path, previous, next);
+    }
     // Include generated code content so extractCodeBlocks() can detect AI-produced code.
     // CLI tools use snake_case field names: create → file_text, edit → new_str.
     const code = typeof args.file_text === 'string' ? args.file_text
@@ -238,8 +288,13 @@ function handleToolExecutionStart(ev: CLIEvent, state: CLIParseState): void {
               : null;
     if (code) {
       const ext = args.path.split('.').pop() || 'unknown';
-      turn.responseChunks.push(`\`\`\`${ext}\n${code}\n\`\`\``);
+      pending.codeBlock = `\`\`\`${ext}\n${code}\n\`\`\``;
     }
+  }
+  if (pending.editedFiles.size > 0) {
+    const toolCallId = str(data.toolCallId);
+    if (toolCallId) turn.pendingToolEdits.set(toolCallId, pending);
+    else commitToolEdit(turn, pending);
   }
   if (FILE_REF_TOOLS.has(toolName) && typeof args.path === 'string') turn.referencedFiles.add(args.path);
   if (toolName === 'skill' && typeof args.skill === 'string') turn.skillsUsed.add(args.skill);
@@ -248,6 +303,12 @@ function handleToolExecutionStart(ev: CLIEvent, state: CLIParseState): void {
 function handleToolExecutionComplete(data: Record<string, unknown>, state: CLIParseState): void {
   const turn = state.turn;
   if (!turn) return;
+  const toolCallId = str(data.toolCallId);
+  const pending = toolCallId ? turn.pendingToolEdits.get(toolCallId) : undefined;
+  if (pending) {
+    if (data.success !== false) commitToolEdit(turn, pending);
+    turn.pendingToolEdits.delete(toolCallId);
+  }
   const model = str(data.model);
   if (model && !turn.modelId) turn.modelId = model;
 }
@@ -355,7 +416,7 @@ function handleCliEvent(ev: CLIEvent, state: CLIParseState, wsId: string): void 
   }
 }
 
-function createInitialCliState(wsId: string): CLIParseState {
+function createInitialCliState(wsId: string, editLocIndex?: EditLocIndex): CLIParseState {
   return {
     sessionId: wsId,
     isApp: false,
@@ -366,6 +427,7 @@ function createInitialCliState(wsId: string): CLIParseState {
     sawShutdown: false,
     requests: [],
     turn: null,
+    editLocIndex,
   };
 }
 
@@ -395,8 +457,14 @@ function finalizeCliSession(
   });
 }
 
-export function parseCLIEventsFile(eventsPath: string, wsId: string, wsName: string, customInstructionsBytes?: number): Session | null {
-  const state = createInitialCliState(wsId);
+export function parseCLIEventsFile(
+  eventsPath: string,
+  wsId: string,
+  wsName: string,
+  customInstructionsBytes?: number,
+  editLocIndex?: EditLocIndex,
+): Session | null {
+  const state = createInitialCliState(wsId, editLocIndex);
 
   let sawAnyEvent = false;
   try {
@@ -432,8 +500,9 @@ export async function parseCLIEventsFileAsync(
   wsName: string,
   customInstructionsBytes?: number,
   onProgress?: (bytesRead: number, totalBytes: number) => void,
+  editLocIndex?: EditLocIndex,
 ): Promise<Session | null> {
-  const state = createInitialCliState(wsId);
+  const state = createInitialCliState(wsId, editLocIndex);
 
   let sawAnyEvent = false;
   try {
@@ -454,4 +523,3 @@ export async function parseCLIEventsFileAsync(
 
   return finalizeCliSession(state, wsId, wsName, customInstructionsBytes);
 }
-

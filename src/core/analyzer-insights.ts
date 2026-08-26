@@ -335,7 +335,7 @@ export class InsightsAnalyzer extends AnalyzerBase {
 
       for (let i = 0; i < s.requests.length; i++) {
         const r = s.requests[i];
-        const aiLoc = r.aiCode.reduce((sum, b) => sum + b.loc, 0);
+        const aiLoc = this.requestLoc(r);
         sessionAiLoc += aiLoc;
 
         const gap = aiLoc > 0 && i < s.requests.length - 1

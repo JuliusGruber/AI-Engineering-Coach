@@ -135,7 +135,7 @@ export class ImageAnalyzer extends AnalyzerBase {
       if (!session) continue;
 
       const turnIdx = session.requests.indexOf(r);
-      const aiLoc = r.aiCode.reduce((s, b) => s + b.loc, 0);
+      const aiLoc = this.requestLoc(r);
 
       moments.push({
         id: r.requestId,

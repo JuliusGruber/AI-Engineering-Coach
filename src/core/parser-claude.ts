@@ -21,12 +21,22 @@ import { Session, SessionRequest } from './types';
 import { assertTrustedPath, readFileSafe, createRequest, createSession, detectDevcontainerFromRequests, extractSkillNameFromPath } from './parser-shared';
 import { extractReasoningEffortFromModelId } from './helpers';
 import { warnCore } from './log';
+import { EditLocIndex } from './edit-loc-diff';
+import {
+  FileEditLocMap,
+  mergeRequestEditLoc,
+  recordContentReplacement,
+  recordCreatedContent,
+} from './edit-tool-diff';
 
 interface ClaudeContentBlock {
   type: string;
+  id?: string;
   text?: string;
   name?: string;
   input?: Record<string, unknown>;
+  tool_use_id?: string;
+  is_error?: boolean;
 }
 
 interface ClaudeMessage {
@@ -90,9 +100,10 @@ interface ClaudeAssistantData {
   totalCacheReadTokens: number;
   totalCacheWriteTokens: number;
   assistantCount: number;
+  editLocs: FileEditLocMap;
 }
 
-const CLAUDE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEditTool']);
+const CLAUDE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'MultiEditTool']);
 const CLAUDE_READ_FILE_TOOLS = new Set(['Read', 'View']);
 const CLAUDE_READ_PATH_TOOLS = new Set(['Glob', 'LS', 'Find']);
 
@@ -102,9 +113,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isClaudeContentBlock(value: unknown): value is ClaudeContentBlock {
   if (!isRecord(value) || typeof value.type !== 'string') return false;
+  if (value.id !== undefined && typeof value.id !== 'string') return false;
   if (value.text !== undefined && typeof value.text !== 'string') return false;
   if (value.name !== undefined && typeof value.name !== 'string') return false;
   if (value.input !== undefined && value.input !== null && !isRecord(value.input)) return false;
+  if (value.tool_use_id !== undefined && typeof value.tool_use_id !== 'string') return false;
+  if (value.is_error !== undefined && typeof value.is_error !== 'boolean') return false;
   return true;
 }
 
@@ -218,11 +232,13 @@ function countClaudeImages(line: ClaudeLine): number {
 
 function applyClaudeToolBlock(
   block: ClaudeContentBlock,
-  data: Pick<ClaudeAssistantData, 'toolsUsed' | 'editedFiles' | 'referencedFiles' | 'skillsUsed'>,
+  data: Pick<ClaudeAssistantData, 'toolsUsed' | 'editedFiles' | 'referencedFiles' | 'skillsUsed' | 'editLocs'>,
+  failed: boolean,
 ): void {
   if (block.type !== 'tool_use' || !block.name) return;
 
   data.toolsUsed.push(block.name);
+  if (failed) return;
 
   // Claude Code's Skill tool: { name: 'Skill', input: { skill: '<name>', args: '...' } }
   if (block.name === 'Skill') {
@@ -232,7 +248,32 @@ function applyClaudeToolBlock(
   }
   if (CLAUDE_WRITE_TOOLS.has(block.name)) {
     const filePath = getInputPath(block.input, 'file_path');
-    if (filePath) data.editedFiles.push(filePath);
+    if (filePath) {
+      data.editedFiles.push(filePath);
+      if (block.name === 'Write') {
+        const content = getInputPath(block.input, 'content');
+        if (content !== null) recordCreatedContent(data.editLocs, filePath, content);
+      } else if (block.name === 'Edit') {
+        const previous = getInputPath(block.input, 'old_string')
+          ?? getInputPath(block.input, 'old_str')
+          ?? '';
+        const next = getInputPath(block.input, 'new_string')
+          ?? getInputPath(block.input, 'new_str')
+          ?? '';
+        if (previous || next) recordContentReplacement(data.editLocs, filePath, previous, next);
+      } else if (Array.isArray(block.input?.edits)) {
+        for (const rawEdit of block.input.edits) {
+          if (!isRecord(rawEdit)) continue;
+          const previous = getInputPath(rawEdit, 'old_string')
+            ?? getInputPath(rawEdit, 'old_str')
+            ?? '';
+          const next = getInputPath(rawEdit, 'new_string')
+            ?? getInputPath(rawEdit, 'new_str')
+            ?? '';
+          if (previous || next) recordContentReplacement(data.editLocs, filePath, previous, next);
+        }
+      }
+    }
     return;
   }
 
@@ -246,6 +287,25 @@ function applyClaudeToolBlock(
     const targetPath = getInputPath(block.input, 'path');
     if (targetPath) data.referencedFiles.push(targetPath);
   }
+}
+
+function collectClaudeToolResults(
+  lines: ClaudeLine[],
+  startIndex: number,
+): { completed: Set<string>; failed: Set<string> } {
+  const completed = new Set<string>();
+  const failed = new Set<string>();
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.type === 'user' && userHasText(line)) break;
+    if (line.type !== 'user') continue;
+    for (const block of toContentArray(line.message?.content)) {
+      if (block.type !== 'tool_result' || !block.tool_use_id) continue;
+      completed.add(block.tool_use_id);
+      if (block.is_error === true) failed.add(block.tool_use_id);
+    }
+  }
+  return { completed, failed };
 }
 
 function collectClaudeAssistantData(lines: ClaudeLine[], startIndex: number, lastTs: number | null): ClaudeAssistantData {
@@ -263,8 +323,10 @@ function collectClaudeAssistantData(lines: ClaudeLine[], startIndex: number, las
     totalCacheReadTokens: 0,
     totalCacheWriteTokens: 0,
     assistantCount: 0,
+    editLocs: new Map(),
   };
 
+  const toolResults = collectClaudeToolResults(lines, startIndex);
   let i = startIndex;
   while (i < lines.length) {
     const next = lines[i];
@@ -288,13 +350,16 @@ function collectClaudeAssistantData(lines: ClaudeLine[], startIndex: number, las
           data.assistantTexts.push(block.text);
           continue;
         }
-        applyClaudeToolBlock(block, data);
+        const incomplete = !!block.id && !toolResults.completed.has(block.id);
+        const failed = incomplete || (!!block.id && toolResults.failed.has(block.id));
+        applyClaudeToolBlock(block, data, failed);
         // Extract code content from write tools so extractCodeBlocks() can count LoC.
-        // Claude Write uses `content`, Edit uses `new_str`.
-        if (block.type === 'tool_use' && block.name && CLAUDE_WRITE_TOOLS.has(block.name) && block.input) {
+        // Claude Write uses `content`; current Edit uses `new_string` (legacy logs used `new_str`).
+        if (!failed && block.type === 'tool_use' && block.name && CLAUDE_WRITE_TOOLS.has(block.name) && block.input) {
           const filePath = getInputPath(block.input, 'file_path');
           const code = typeof block.input.content === 'string' ? block.input.content
-            : typeof block.input.new_str === 'string' ? block.input.new_str
+            : typeof block.input.new_string === 'string' ? block.input.new_string
+              : typeof block.input.new_str === 'string' ? block.input.new_str
               : null;
           if (code && filePath) {
             const ext = filePath.split('.').pop() || 'unknown';
@@ -405,6 +470,7 @@ function projectNameFromEncoded(encoded: string, _projectsDir: string): string {
 function parseClaudeProjectSessions(
   projectsDir: string,
   dirName: string,
+  editLocIndex?: EditLocIndex,
 ): { sessions: Session[]; workspaceId: string; workspaceName: string } | null {
   const projPath = path.join(projectsDir, dirName);
   const workspaceId = `claude-${dirName}`;
@@ -424,7 +490,7 @@ function parseClaudeProjectSessions(
   const sessions: Session[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-    const session = parseClaudeSessionFile(path.join(projPath, entry.name), workspaceId, workspaceName);
+    const session = parseClaudeSessionFile(path.join(projPath, entry.name), workspaceId, workspaceName, editLocIndex);
     if (!session) continue;
     sessions.push(session);
     sessionsById.set(session.sessionId, session);
@@ -454,7 +520,7 @@ function parseClaudeProjectSessions(
     for (const subEntry of subagentEntries) {
       if (!subEntry.isFile() || !subEntry.name.endsWith('.jsonl')) continue;
       const subSession = parseClaudeSessionFile(
-        path.join(subagentDir, subEntry.name), workspaceId, workspaceName,
+        path.join(subagentDir, subEntry.name), workspaceId, workspaceName, editLocIndex,
       );
       if (!subSession) continue;
 
@@ -517,7 +583,10 @@ function parseClaudeProjectSessions(
   return sessions.length > 0 ? { sessions, workspaceId, workspaceName } : null;
 }
 
-export function parseClaudeSessions(projectsDir: string): { sessions: Session[]; workspaceId: string; workspaceName: string }[] {
+export function parseClaudeSessions(
+  projectsDir: string,
+  editLocIndex?: EditLocIndex,
+): { sessions: Session[]; workspaceId: string; workspaceName: string }[] {
   const results: { sessions: Session[]; workspaceId: string; workspaceName: string }[] = [];
 
   let projectDirs: fs.Dirent[];
@@ -528,7 +597,7 @@ export function parseClaudeSessions(projectsDir: string): { sessions: Session[];
   }
 
   for (const projDir of projectDirs) {
-    const result = parseClaudeProjectSessions(projectsDir, projDir.name);
+    const result = parseClaudeProjectSessions(projectsDir, projDir.name, editLocIndex);
     if (result) results.push(result);
   }
 
@@ -538,6 +607,7 @@ export function parseClaudeSessions(projectsDir: string): { sessions: Session[];
 export async function parseClaudeSessionsAsync(
   projectsDir: string,
   onProject?: (idx: number, total: number, name: string) => void,
+  editLocIndex?: EditLocIndex,
 ): Promise<{ sessions: Session[]; workspaceId: string; workspaceName: string }[]> {
   const results: { sessions: Session[]; workspaceId: string; workspaceName: string }[] = [];
 
@@ -556,7 +626,7 @@ export async function parseClaudeSessionsAsync(
 
     if (onProject) onProject(i + 1, projectDirs.length, workspaceName);
 
-    const result = parseClaudeProjectSessions(projectsDir, dirName);
+    const result = parseClaudeProjectSessions(projectsDir, dirName, editLocIndex);
     if (result) results.push(result);
 
     // Yield every 5 projects so the event loop stays responsive
@@ -592,14 +662,17 @@ function buildClaudeRequest(
   assistantData: ClaudeAssistantData,
   userTs: number | null,
   requestIndex: number,
+  sessionId: string,
+  editLocIndex?: EditLocIndex,
 ): SessionRequest {
   const hasAnyTokens = assistantData.assistantCount > 0;
   const imageCount = countClaudeImages(line);
   const uniqueRefs = [...new Set(assistantData.referencedFiles)];
   const skills = new Set(assistantData.skillsUsed);
   for (const name of extractSkillsFromRefs(uniqueRefs)) skills.add(name);
-  return createRequest({
-    requestId: line.uuid || `claude-${requestIndex}`,
+  const requestId = line.uuid || `${line.sessionId ?? sessionId}:claude:${requestIndex}`;
+  const request = createRequest({
+    requestId,
     timestamp: userTs,
     messageText: getClaudeUserText(line),
     responseText: assistantData.assistantTexts.join('\n'),
@@ -618,9 +691,16 @@ function buildClaudeRequest(
     cacheWriteTokens: assistantData.totalCacheWriteTokens > 0 ? assistantData.totalCacheWriteTokens : null,
     reasoningEffort: extractReasoningEffortFromModelId(assistantData.model),
   });
+  mergeRequestEditLoc(editLocIndex, requestId, assistantData.editLocs);
+  return request;
 }
 
-function parseClaudeSessionFile(filePath: string, wsId: string, wsName: string): Session | null {
+function parseClaudeSessionFile(
+  filePath: string,
+  wsId: string,
+  wsName: string,
+  editLocIndex?: EditLocIndex,
+): Session | null {
   assertTrustedPath(filePath);
   let raw: string;
   try {
@@ -658,7 +738,7 @@ function parseClaudeSessionFile(filePath: string, wsId: string, wsName: string):
 
     const assistantData = collectClaudeAssistantData(lines, i + 1, lastTs);
     lastTs = assistantData.lastTs;
-    requests.push(buildClaudeRequest(line, assistantData, userTs, requests.length));
+    requests.push(buildClaudeRequest(line, assistantData, userTs, requests.length, sessionId, editLocIndex));
     i = assistantData.nextIndex;
   }
 

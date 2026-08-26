@@ -43,4 +43,29 @@ test.describe('Loading telemetry strip (issue #106)', () => {
     expect(await page.textContent('#tg-rss')).toContain('1.5 GB'); // rssMB 1536
     expect(await page.textContent('#tg-buf')).toContain('320 MB'); // fileBufMB 320
   });
+
+  test('keeps the status card stable for long workspace paths', async ({ page }) => {
+    const metrics = await page.locator('#loading-phase-detail').evaluate((element) => {
+      const detail = element as HTMLElement;
+      const longText = detail.textContent ?? '';
+      const longHeight = detail.getBoundingClientRect().height;
+      const isTruncated = detail.scrollWidth > detail.clientWidth;
+
+      detail.textContent = 'Short workspace path';
+      const shortHeight = detail.getBoundingClientRect().height;
+      detail.textContent = longText;
+
+      return {
+        longHeight,
+        shortHeight,
+        isTruncated,
+        title: detail.title,
+        text: longText,
+      };
+    });
+
+    expect(metrics.isTruncated).toBe(true);
+    expect(metrics.longHeight).toBe(metrics.shortHeight);
+    expect(metrics.title).toBe(metrics.text);
+  });
 });

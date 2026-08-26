@@ -60,8 +60,11 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return base;
 }
 
-function createAnalyzer(sessions: Session[]): PatternsAnalyzer {
-  return new PatternsAnalyzer(sessions, new Map());
+function createAnalyzer(
+  sessions: Session[],
+  editLocIndex = new Map<string, Map<string, { added: number; removed: number }>>(),
+): PatternsAnalyzer {
+  return new PatternsAnalyzer(sessions, editLocIndex);
 }
 
 describe('PatternsAnalyzer', () => {
@@ -256,6 +259,23 @@ describe('PatternsAnalyzer', () => {
       expect(result.projects[0].workspaceName).toBe('project-x');
       expect(result.projects[0].estimatedHours).toBeGreaterThan(0);
       expect(result.projects[0].estimatedLoc).toBeGreaterThan(0);
+    });
+
+    it('uses exact edit LoC instead of adding synthetic tool code blocks', () => {
+      const ts = new Date('2024-03-15T10:00:00').getTime();
+      const request = makeRequest({
+        requestId: 'exact',
+        timestamp: ts,
+        aiCode: [{ language: 'typescript', loc: 50 }],
+      });
+      const sessions = [makeSession({ workspaceName: 'project-x', requests: [request] })];
+      const editLocIndex = new Map([
+        ['exact', new Map([['file:///src/main.ts', { added: 4, removed: 2 }]])],
+      ]);
+
+      const result = createAnalyzer(sessions, editLocIndex).getProjectOverview();
+
+      expect(result.projects[0].estimatedLoc).toBe(4);
     });
 
     it('determines time pattern', () => {
