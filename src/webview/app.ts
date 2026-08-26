@@ -171,7 +171,9 @@ function updateLoadingLog(phase: string, detail: string): void {
 
   const now = new Date();
   const ts = `${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-  line.textContent = `[${ts}] ${phase}${detail ? ' \u2014 ' + detail : ''}`;
+  const logText = `[${ts}] ${phase}${detail ? ' \u2014 ' + detail : ''}`;
+  line.textContent = logText;
+  line.title = logText;
   log.appendChild(line);
   while (log.children.length > 200) log.removeChild(log.firstChild!);
   log.scrollTop = log.scrollHeight;
@@ -266,7 +268,11 @@ function handleProgress(msg: ProgressMessage): void {
   const phaseTitleEl = document.getElementById('loading-phase-title');
   if (phaseTitleEl) phaseTitleEl.textContent = phase;
   const phaseDetailEl = document.getElementById('loading-phase-detail');
-  if (phaseDetailEl) phaseDetailEl.textContent = detail || 'Working through your workspace history.';
+  if (phaseDetailEl) {
+    const detailText = detail || 'Working through your workspace history.';
+    phaseDetailEl.textContent = detailText;
+    phaseDetailEl.title = detailText;
+  }
 
   const bar = document.getElementById('load-progress-bar');
   if (bar) bar.style.width = `${Math.min(100, msg.pct)}%`;
