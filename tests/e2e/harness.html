@@ -51,6 +51,9 @@ body { background: var(--vscode-editor-background); color: var(--vscode-editor-f
       <li class="nav-group-header">Explore</li>
       <li><a href="#" data-page="data-explorer"><span class="nav-icon">&#9776;</span> Data Explorer</a></li>
       <li><a href="#" data-page="rule-playground"><span class="nav-icon">&#9881;</span> Rule Playground</a></li>
+      <li class="nav-group-header github-app-nav-item" hidden>GitHub App</li>
+      <li class="github-app-nav-item" hidden><a href="#" data-page="github-app"><span class="nav-icon">&#9670;</span> Productivity<span class="nav-badge" id="badge-github-app"></span></a></li>
+      <li class="github-app-nav-item" hidden><a href="#" data-page="github-app-issue-credits"><span class="nav-icon">$</span> Issue credits<span class="nav-badge" id="badge-github-app-issue-credits"></span></a></li>
     </ul>
     <div class="sidebar-filters">
       <div class="sidebar-filter">
@@ -142,18 +145,62 @@ function getMockData(method, params) {
       values: [980, 720, 510, 401, 230]
     }),
 
+    getGitHubAppMetrics: () => {
+      const appState = new URLSearchParams(window.location.search).get('githubApp');
+      if (appState === 'absent') return { status: 'absent' };
+      if (appState === 'unavailable') return { status: 'unavailable' };
+      return {
+        status: 'ready',
+        metrics: {
+          totalProjectSessions: 42,
+          sessionsWithIssue: 17,
+          sessionsWithPullRequest: 26,
+          sessionsWithMergedPullRequest: 18,
+          lastActivityAt: '2026-05-03T14:20:00.000Z',
+          mergeHistory: [
+            ['2026-04-27', 5, 3], ['2026-04-28', 3, 2], ['2026-04-29', 0, 0],
+            ['2026-04-30', 6, 5], ['2026-05-01', 2, 1], ['2026-05-02', 4, 3],
+            ['2026-05-03', 5, 4]
+          ].map(([date, pullRequestsRaised, pullRequestsMerged]) => ({
+            date,
+            pullRequestsRaised,
+            pullRequestsMerged
+          }))
+        }
+      };
+    },
+
+    getGitHubAppIssueCredits: () => ({
+      status: 'ready',
+      metrics: {
+        issues: [
+          { repository: 'microsoft/AI-Engineering-Coach', issueNumber: 314, linkedSessionCount: 6, pricedSessionCount: 6, estimatedCredits: 184.72 },
+          { repository: 'microsoft/AI-Engineering-Coach', issueNumber: 287, linkedSessionCount: 4, pricedSessionCount: 3, estimatedCredits: 96.4 },
+          { repository: 'octo-org/service-api', issueNumber: 91, linkedSessionCount: 3, pricedSessionCount: 3, estimatedCredits: 58.11 },
+          { repository: 'octo-org/web-client', issueNumber: 204, linkedSessionCount: 2, pricedSessionCount: 2, estimatedCredits: 21.08 }
+        ],
+        linkedSessionCount: 15,
+        pricedSessionCount: 14,
+        estimatedCredits: 360.31
+      }
+    }),
+
     getCodeProduction: () => ({
       summary: {
         totalAiLoc: 14520, totalUserLoc: 3200, totalLoc: 17720,
+        totalRemovedAiLoc: 1200, totalNetAiLoc: 13320,
         aiBlocks: 892, userBlocks: 340, aiRatio: 0.82,
         locCost2010: 290400, costPerLoc: 0.04
       },
       byLanguage: { labels: ['TypeScript', 'Python', 'Go', 'Rust'], aiLoc: [8200, 3100, 2100, 1120], userLoc: [1800, 900, 400, 100] },
-      dailyTimeline: { labels: labels30, aiLoc: labels30.map(() => Math.floor(Math.random() * 600) + 100), userLoc: labels30.map(() => Math.floor(Math.random() * 150) + 20) },
+      dailyTimeline: { labels: labels30, aiLoc: labels30.map(() => Math.floor(Math.random() * 600) + 100), removedLoc: labels30.map(() => Math.floor(Math.random() * 50)), userLoc: labels30.map(() => Math.floor(Math.random() * 150) + 20) },
       byWorkspace: { labels: ['my-api', 'frontend-app', 'data-pipeline', 'mobile-sdk', 'infra-tools'], aiLoc: [5000, 4200, 3100, 1500, 720], userLoc: [1200, 1000, 600, 300, 100] },
       dailyByWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 200) + 50), 'frontend-app': labels30.map(() => Math.floor(Math.random() * 150) + 40) },
+      dailyRemovedByWorkspace: { 'my-api': labels30.map(() => Math.floor(Math.random() * 20)), 'frontend-app': labels30.map(() => Math.floor(Math.random() * 15)) },
       dailyByModel: { 'gpt-4o': labels30.map(() => Math.floor(Math.random() * 180) + 40), 'claude-sonnet-4-20250514': labels30.map(() => Math.floor(Math.random() * 120) + 30) },
-      dailyByHarness: { 'Local Agent': labels30.map(() => Math.floor(Math.random() * 160) + 40), 'Claude Code': labels30.map(() => Math.floor(Math.random() * 90) + 20) }
+      dailyRemovedByModel: { 'gpt-4o': labels30.map(() => Math.floor(Math.random() * 20)), 'claude-sonnet-4-20250514': labels30.map(() => Math.floor(Math.random() * 15)) },
+      dailyByHarness: { 'Local Agent': labels30.map(() => Math.floor(Math.random() * 160) + 40), 'Claude Code': labels30.map(() => Math.floor(Math.random() * 90) + 20) },
+      dailyRemovedByHarness: { 'Local Agent': labels30.map(() => Math.floor(Math.random() * 20)), 'Claude Code': labels30.map(() => Math.floor(Math.random() * 15)) }
     }),
 
     getConsumption: () => ({
@@ -448,6 +495,7 @@ if (__mode === 'loading') {
     type: 'progress',
     phase: 2,
     phaseLabel: 'Parsing session logs',
+    detail: 'workspace 7/9: C:\\Users\\developer\\source\\repos\\customer-platform\\services\\artificial-intelligence\\session-processing\\workspace-with-an-intentionally-long-name',
     pct: 47,
     sessions: 1280,
     workspaces: 9,

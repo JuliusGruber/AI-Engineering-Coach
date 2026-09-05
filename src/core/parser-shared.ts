@@ -10,7 +10,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeBlock, Session, SessionRequest, Workspace } from './types';
 import { SessionSource } from './cache';
-import { classifyWorkType } from './helpers';
+import { EditLocIndex } from './edit-loc-diff';
+import { classifyWorkType, LANG_ALIASES } from './helpers';
 import { warnCore } from './log';
 import { SessionSchema } from './schemas';
 
@@ -54,6 +55,9 @@ function getTrustedRoots(): string[] {
   } else {
     if (home) roots.push(path.resolve(home, '.config', 'Code'));
     if (home) roots.push(path.resolve(home, '.config', 'Code - Insiders'));
+  }
+  for (const configuredRoot of [process.env.XDG_DATA_HOME, process.env.LOCALAPPDATA]) {
+    if (configuredRoot) roots.push(path.resolve(configuredRoot));
   }
 
   // Standard session log locations
@@ -230,17 +234,7 @@ const MAX_STORED_MESSAGE_CHARS = 16_000;
 const MAX_STORED_RESPONSE_CHARS = 24_000;
 const MAX_CODE_SCAN_CHARS = 128_000;
 
-export const LANG_ALIASES: Record<string, string> = {
-  sh: 'bash', shell: 'bash', zsh: 'bash',
-  ts: 'typescript', tsx: 'typescript',
-  js: 'javascript', jsx: 'javascript',
-  py: 'python', python3: 'python',
-  cs: 'csharp', 'c#': 'csharp',
-  yml: 'yaml', md: 'markdown',
-  tf: 'terraform', rs: 'rust', rb: 'ruby',
-  jsonc: 'json', jsonl: 'json',
-  txt: 'text', plaintext: 'text', env: 'dotenv',
-};
+export { LANG_ALIASES } from './helpers';
 
 const EXT_TO_TECH: Record<string, string> = {
   py: 'Python', pyx: 'Python', pyi: 'Python',
@@ -326,7 +320,7 @@ function textForCodeScan(text: string): string {
 export interface ParseContext {
   workspaces: Map<string, Workspace>;
   sessions: Session[];
-  editLocIndex: Map<string, Map<string, number>>;
+  editLocIndex: EditLocIndex;
   sessionSourceIndex: Map<string, SessionSource>;
   /** Running total of AI-generated lines of code (sum of all aiCode blocks). */
   aiLoc: number;

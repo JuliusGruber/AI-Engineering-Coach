@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Session } from './types';
 import { createSession, detectDevcontainerFromRequests, ParseContext, prefetchCache, stripSingleSession, maybeForceGc, addParseTiming } from './parser-shared';
+import { accumulateEditLoc, EditTimelineLike, InitialContentResolver } from './edit-loc-diff';
 import { debugCore, warnCore } from './log';
 import { canonicalizeReasoningEffort } from './helpers';
 import { parseRawRequest, normalizeSessionMode, type RawRequest } from './parser-vscode-request';
@@ -71,7 +72,11 @@ export function scanVsCodeDirs(logsDirs: string[]): {
   for (const logsDir of logsDirs) {
     try {
       const all = fs.readdirSync(logsDir, { withFileTypes: true });
-      const dirs = all.filter(e => e.isDirectory());
+      const isCliSessionState = harnessFromPath(logsDir) === 'GitHub Copilot CLI';
+      const dirs = all.filter(e =>
+        e.isDirectory() &&
+        (!isCliSessionState || fs.existsSync(path.join(logsDir, e.name, 'events.jsonl'))),
+      );
       totalDirs += dirs.length;
       entries.push({ logsDir, dirEntries: dirs });
     } catch (e) {
@@ -153,30 +158,56 @@ function listEditStateFiles(esDir: string): string[] {
   }
 }
 
-function countLinesAdded(edits: { text?: string }[] | undefined): number {
-  let linesAdded = 0;
-  for (const edit of (edits || [])) {
-    const text = edit.text || '';
-    if (text) linesAdded += (text.match(/\n/g) || []).length;
-  }
-  return linesAdded;
+function sessionFileExists(filePath: string): boolean {
+  return prefetchCache.has(filePath) || fs.existsSync(filePath);
 }
 
-function processEditOperation(op: EditStateOperation, editLocIndex: ParseContext['editLocIndex']): void {
-  if (op.type !== 'textEdit') return;
-  const reqId = op.requestId || '';
-  const uri = op.uri?.external || '';
-  if (!reqId || !uri) return;
-  if (!editLocIndex.has(reqId)) editLocIndex.set(reqId, new Map());
-  const fileMap = editLocIndex.get(reqId)!;
-  const linesAdded = countLinesAdded(op.edits);
-  fileMap.set(uri, (fileMap.get(uri) || 0) + linesAdded);
+type EditState = {
+  initialFileContents?: [string, string][];
+  timeline?: EditTimelineLike;
+};
+
+/**
+ * Builds a lazy resolver for a file's session-initial content, reading the content-addressed
+ * `contents/<hash>` blob referenced by `initialFileContents` only when first requested.
+ */
+function makeInitialContentResolver(state: EditState, stateDir: string): InitialContentResolver {
+  const hashByUri = new Map<string, string>();
+  for (const entry of state.initialFileContents ?? []) {
+    const uri = entry?.[0];
+    const hash = entry?.[1];
+    if (typeof uri === 'string' && typeof hash === 'string') hashByUri.set(uri, hash);
+  }
+  const cache = new Map<string, string | undefined>();
+  return (uri: string): string | undefined => {
+    if (cache.has(uri)) return cache.get(uri);
+    const hash = hashByUri.get(uri);
+    let content: string | undefined;
+    if (hash) {
+      try {
+        content = readFile(path.join(stateDir, 'contents', hash));
+      } catch {
+        content = undefined;
+      }
+    }
+    cache.set(uri, content);
+    return content;
+  };
 }
 
-function processEditOperations(operations: EditStateOperation[] | undefined, editLocIndex: ParseContext['editLocIndex']): void {
-  for (const op of (operations || [])) {
-    processEditOperation(op, editLocIndex);
+/** Parses an edit-state JSON payload and accumulates AI-produced LoC into `editLocIndex`. */
+export function parseEditState(raw: string, editLocIndex: ParseContext['editLocIndex'], stateDir: string): void {
+  if (!raw.includes('"textEdit"')
+      && !raw.includes('"create"')
+      && !raw.includes('"delete"')
+      && !raw.includes('"rename"')
+      && !raw.includes('"notebookEdit"')) return;
+  let state: EditState;
+  try { state = JSON.parse(raw) as EditState; } catch (e) {
+    warnCore('parser-vscode', `Corrupt state payload in ${stateDir}`, e);
+    return;
   }
+  accumulateEditLoc(state.timeline, editLocIndex, makeInitialContentResolver(state, stateDir));
 }
 
 function parseEditStateFile(stateFile: string, editLocIndex: ParseContext['editLocIndex']): void {
@@ -188,13 +219,7 @@ function parseEditStateFile(stateFile: string, editLocIndex: ParseContext['editL
     }
     return;
   }
-  if (!raw.includes('"textEdit"')) return;
-  let state: { timeline?: { operations?: EditStateOperation[] } };
-  try { state = JSON.parse(raw) as typeof state; } catch (e) {
-    warnCore('parser-vscode', `Corrupt state file ${stateFile}`, e);
-    return;
-  }
-  processEditOperations(state.timeline?.operations, editLocIndex);
+  parseEditState(raw, editLocIndex, path.dirname(stateFile));
 }
 
 function chunkInterval(total: number): number {
@@ -247,7 +272,7 @@ export function processWorkspaceEntry(
 
   if (isCLI) {
     const eventsFile = path.join(entryPath, 'events.jsonl');
-    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes);
+    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
     if (cliSession) {
       sessions.push(cliSession);
       sessionSourceIndex.set(cliSession.sessionId, {
@@ -278,16 +303,18 @@ export function processWorkspaceEntry(
   }
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
-  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes);
-  if (cliSession) {
-    sessions.push(cliSession);
-    sessionSourceIndex.set(cliSession.sessionId, {
-      kind: 'cli-events',
-      filePath: eventsFile,
-      workspaceId: wsId,
-      workspaceName: wsName,
-      harness,
-    });
+  if (sessionFileExists(eventsFile)) {
+    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
+    if (cliSession) {
+      sessions.push(cliSession);
+      sessionSourceIndex.set(cliSession.sessionId, {
+        kind: 'cli-events',
+        filePath: eventsFile,
+        workspaceId: wsId,
+        workspaceName: wsName,
+        harness,
+      });
+    }
   }
 
   const esDir = path.join(entryPath, 'chatEditingSessions');
@@ -330,6 +357,7 @@ export async function processWorkspaceEntryAsync(
           total,
         });
       },
+      editLocIndex,
     );
     if (cliSession) {
       sessions.push(cliSession);
@@ -387,19 +415,21 @@ export async function processWorkspaceEntryAsync(
   }
 
   const eventsFile = path.join(entryPath, 'events.jsonl');
-  const tCli = Date.now();
-  const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes);
-  addParseTiming('cli', Date.now() - tCli);
-  if (cliSession) {
-    stripSingleSession(cliSession);
-    sessions.push(cliSession);
-    sessionSourceIndex.set(cliSession.sessionId, {
-      kind: 'cli-events',
-      filePath: eventsFile,
-      workspaceId: wsId,
-      workspaceName: wsName,
-      harness,
-    });
+  if (sessionFileExists(eventsFile)) {
+    const tCli = Date.now();
+    const cliSession = parseCLIEventsFile(eventsFile, wsId, wsName, customInstructionsBytes, editLocIndex);
+    addParseTiming('cli', Date.now() - tCli);
+    if (cliSession) {
+      stripSingleSession(cliSession);
+      sessions.push(cliSession);
+      sessionSourceIndex.set(cliSession.sessionId, {
+        kind: 'cli-events',
+        filePath: eventsFile,
+        workspaceId: wsId,
+        workspaceName: wsName,
+        harness,
+      });
+    }
   }
 
   for (let i = 0; i < editStateFiles.length; i++) {
@@ -446,13 +476,6 @@ interface SessionFileData {
     };
   };
 }
-
-type EditStateOperation = {
-  type: string;
-  requestId?: string;
-  uri?: { external?: string };
-  edits?: { text?: string }[];
-};
 
 export function parseSessionFile(sessionFile: string, wsId: string, wsName: string, harness: string, customInstructionsBytes?: number): Session | null {
 

@@ -2273,7 +2273,11 @@ h2 {
   font-size: 13px;
   line-height: 1.45;
   color: var(--text-muted);
+  width: 100%;
   max-width: 620px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .loading-body {
   display: grid;

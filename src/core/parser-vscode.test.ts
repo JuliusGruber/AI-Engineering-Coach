@@ -9,7 +9,16 @@ import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import { reconstructFromJsonl } from './parser-vscode-files';
 import { parseCLIEventsFile } from './parser-vscode-cli';
-import { parseSessionFile, harnessFromPath, findVsCodeDirs, scanVsCodeDirs } from './parser-vscode';
+import {
+  parseSessionFile,
+  harnessFromPath,
+  findVsCodeDirs,
+  scanVsCodeDirs,
+  parseEditState,
+  processWorkspaceEntry,
+  processWorkspaceEntryAsync,
+} from './parser-vscode';
+import { getParseWarningCounts, type ParseContext, resetParseWarnings } from './parser-shared';
 
 function withTempFile(name: string, content: string, run: (filePath: string) => void): void {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-'));
@@ -614,6 +623,48 @@ describe('scanVsCodeDirs', () => {
   });
 });
 
+describe('scanVsCodeDirs — Copilot session state', () => {
+  it('only includes Copilot session-state directories that contain events', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-cli-scan-'));
+    const logsDir = path.join(root, '.copilot', 'session-state');
+    try {
+      fs.mkdirSync(path.join(logsDir, 'with-events'), { recursive: true });
+      fs.mkdirSync(path.join(logsDir, 'without-events'));
+      fs.writeFileSync(path.join(logsDir, 'with-events', 'events.jsonl'), '');
+
+      const { entries, totalDirs } = scanVsCodeDirs([logsDir]);
+
+      expect(totalDirs).toBe(1);
+      expect(entries[0].dirEntries.map(entry => entry.name)).toEqual(['with-events']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not count a missing optional VS Code events file as skipped', async () => {
+    const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-vscode-scan-'));
+    const makeContext = (): ParseContext => ({
+      workspaces: new Map(),
+      sessions: [],
+      editLocIndex: new Map(),
+      sessionSourceIndex: new Map(),
+      aiLoc: 0,
+    });
+    try {
+      fs.mkdirSync(path.join(logsDir, 'workspace'));
+      resetParseWarnings();
+
+      processWorkspaceEntry(logsDir, 'workspace', 'Local Agent', makeContext());
+      await processWorkspaceEntryAsync(logsDir, 'workspace', 'Local Agent', makeContext());
+
+      expect(getParseWarningCounts().skippedFiles).toBe(0);
+    } finally {
+      resetParseWarnings();
+      fs.rmSync(logsDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('parseSessionFile — skill detection', () => {
   it('detects skills from promptFile variables pointing to SKILL.md', () => {
     const data = {
@@ -883,6 +934,107 @@ describe('findVsCodeDirs — VS Code Server', () => {
       process.env.USERPROFILE = userProfile;
       Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseEditState (AI-generated LoC)', () => {
+  const URI = 'file:///project/src/app.ts';
+
+  function wholeFileEdit(text: string): unknown {
+    return { range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1_000_000, endColumn: 1 }, text };
+  }
+
+  function textEditOp(reqId: string, epoch: number, text: string): unknown {
+    return { type: 'textEdit', requestId: reqId, uri: { external: URI }, epoch, edits: [wholeFileEdit(text)] };
+  }
+
+  function totalFor(index: Map<string, Map<string, { added: number; removed: number }>>, uri: string): number {
+    let sum = 0;
+    for (const fileMap of index.values()) sum += fileMap.get(uri)?.added ?? 0;
+    return sum;
+  }
+
+  it('counts repeated whole-file snapshots incrementally, not by summing payloads', () => {
+    const v1 = Array.from({ length: 10 }, (_, i) => `line${i}`).join('\n');
+    const v2 = v1 + '\nline10';
+    const v3 = v2 + '\nline11';
+    const raw = JSON.stringify({
+      timeline: {
+        fileBaselines: [[`${URI}::r1`, { uri: { external: URI }, requestId: 'r1', content: v1 }]],
+        operations: [textEditOp('r1', 1, v1), textEditOp('r1', 2, v2), textEditOp('r1', 3, v3)],
+      },
+    });
+    const index = new Map<string, Map<string, { added: number; removed: number }>>();
+    parseEditState(raw, index, os.tmpdir());
+    expect(totalFor(index, URI)).toBe(2);
+  });
+
+  it('counts create-only payloads', () => {
+    const raw = JSON.stringify({
+      timeline: {
+        operations: [{
+          type: 'create',
+          requestId: 'r1',
+          uri: { external: URI },
+          epoch: 1,
+          initialContent: 'a\nb\nc',
+        }],
+      },
+    });
+    const index = new Map<string, Map<string, { added: number; removed: number }>>();
+    parseEditState(raw, index, os.tmpdir());
+    expect(totalFor(index, URI)).toBe(3);
+  });
+
+  it('counts inserted notebook cell sources through the serialized state parser', () => {
+    const notebookUri = 'file:///project/notebook.ipynb';
+    const raw = JSON.stringify({
+      timeline: {
+        operations: [{
+          type: 'notebookEdit',
+          requestId: 'r1',
+          uri: { external: notebookUri },
+          epoch: 1,
+          cellEdits: [{
+            editType: 1,
+            count: 0,
+            cells: [{ source: 'const one = 1;\nconst two = 2;' }],
+          }],
+        }],
+      },
+    });
+    const index = new Map<string, Map<string, { added: number; removed: number }>>();
+
+    parseEditState(raw, index, os.tmpdir());
+
+    expect(index.get('r1')?.get(notebookUri)).toEqual({ added: 2, removed: 0 });
+  });
+
+  it('does not throw on corrupt JSON that contains the textEdit guard token', () => {
+    const index = new Map<string, Map<string, { added: number; removed: number }>>();
+    expect(() => parseEditState('{"textEdit": not-valid-json', index, os.tmpdir())).not.toThrow();
+    expect(index.size).toBe(0);
+  });
+
+  it('seeds the diff from contents/<hash> when the per-request baseline is missing', () => {
+    const existing = 'a\nb\nc\nd\ne';
+    const edited = 'a\nb\nCHANGED\nd\ne';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-engineer-coach-edits-'));
+    try {
+      const hash = 'deadbeef';
+      fs.mkdirSync(path.join(dir, 'contents'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'contents', hash), existing, 'utf-8');
+      const raw = JSON.stringify({
+        initialFileContents: [[URI, hash]],
+        timeline: { operations: [textEditOp('r1', 1, edited)] },
+      });
+      const index = new Map<string, Map<string, { added: number; removed: number }>>();
+      parseEditState(raw, index, dir);
+      // Only the one changed line is counted — the pre-existing body is not re-counted.
+      expect(totalFor(index, URI)).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

@@ -167,6 +167,24 @@ describe('computeDirMetas', () => {
     expect(metas[wsDir].editCount).toBe(2);
   });
 
+  it('invalidates edit fingerprints when an existing state.json is rewritten', async () => {
+    const logsDir = makeTempDir();
+    const wsDir = path.join(logsDir, 'workspace1');
+    const stateFile = path.join(wsDir, 'chatEditingSessions', 'edit1', 'state.json');
+    fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+    fs.mkdirSync(path.join(wsDir, 'chatSessions'), { recursive: true });
+    fs.writeFileSync(stateFile, '{}');
+    const before = computeDirMetas([logsDir])[wsDir].editMaxMtime;
+    const future = new Date(Date.now() + 60_000);
+    fs.utimesSync(stateFile, future, future);
+
+    const syncAfter = computeDirMetas([logsDir])[wsDir].editMaxMtime;
+    const asyncAfter = (await computeDirMetasAsync([logsDir]))[wsDir].editMaxMtime;
+
+    expect(syncAfter).toBeGreaterThan(before);
+    expect(asyncAfter).toBe(syncAfter);
+  });
+
   it('skips Xcode and CLI directories', () => {
     const logsDir = makeTempDir();
     const xcodeDir = path.join(logsDir, '.config', 'github-copilot', 'xcode');

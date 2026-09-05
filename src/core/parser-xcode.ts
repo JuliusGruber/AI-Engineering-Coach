@@ -18,6 +18,8 @@ import { execFileSync, execFile } from 'child_process';
 import { Session, SessionRequest } from './types';
 import { assertTrustedPath, extractCodeBlocks, createRequest, createSession, detectDevcontainerFromRequests } from './parser-shared';
 import { fileUriToPath } from './helpers';
+import { EditLocIndex } from './edit-loc-diff';
+import { FileEditLocMap, recordContentReplacement } from './edit-tool-diff';
 
 /* ---- Directory discovery ---- */
 
@@ -159,8 +161,16 @@ interface XcodeTurnData {
 interface XcodeAssistantData {
   content?: string;
   editAgentRounds?: { reply?: string; toolCalls?: { name?: string; input?: Record<string, unknown> }[] }[];
-  fileEdits?: { filePath?: string; fileURL?: string }[];
+  fileEdits?: XcodeFileEditLike[];
   turnStatus?: string;
+}
+
+export interface XcodeFileEditLike {
+  filePath?: string;
+  fileURL?: string;
+  originalContent?: string;
+  modifiedContent?: string;
+  status?: string;
 }
 
 function parseAssistantReply(turns: XcodeTurnRow[], index: number): { assistantContent: string; assistantData: XcodeAssistantData | null } {
@@ -207,6 +217,31 @@ function extractEditedFiles(assistantData: XcodeAssistantData | null): string[] 
   return editedFiles;
 }
 
+export function accumulateXcodeFileEdits(
+  fileEdits: XcodeFileEditLike[] | undefined,
+  requestId: string,
+  editLocIndex: EditLocIndex | undefined,
+): void {
+  if (!editLocIndex || !fileEdits || editLocIndex.has(requestId)) return;
+  const deltas: FileEditLocMap = new Map();
+  let recognized = 0;
+  for (const edit of fileEdits) {
+    if (edit.status === 'undone') {
+      recognized++;
+      continue;
+    }
+    const file = edit.filePath
+      || (typeof edit.fileURL === 'string' ? fileUriToPath(edit.fileURL) : '');
+    if (!file || typeof edit.originalContent !== 'string' || typeof edit.modifiedContent !== 'string') continue;
+    recordContentReplacement(deltas, file, edit.originalContent, edit.modifiedContent);
+    recognized++;
+  }
+  // Persisted Xcode telemetry is authoritative even when every edit was undone, but only once
+  // at least one edit was understood. A turn that edited nothing (chat-only) or whose edits
+  // carry no persisted contents must still fall back to counting response code blocks.
+  if (recognized > 0) editLocIndex.set(requestId, deltas);
+}
+
 function extractReferencedFiles(turnData: XcodeTurnData): string[] {
   const referencedFiles: string[] = [];
   if (Array.isArray(turnData.references)) {
@@ -233,6 +268,7 @@ function processTurn(
   i: number,
   turn: XcodeTurnRow,
   turnData: XcodeTurnData,
+  editLocIndex?: EditLocIndex,
 ): SessionRequest | null {
   if (turn.role !== 'user') return null;
 
@@ -247,6 +283,7 @@ function processTurn(
   const toolsUsed = Array.isArray(assistantData?.editAgentRounds)
     ? extractToolsFromRounds(assistantData.editAgentRounds)
     : [];
+  accumulateXcodeFileEdits(assistantData?.fileEdits, turn.id, editLocIndex);
 
   return createRequest({
     requestId: turn.id,
@@ -269,6 +306,7 @@ function processTurn(
 function buildXcodeSession(
   conversation: XcodeConversationRow,
   turns: XcodeTurnRow[],
+  editLocIndex?: EditLocIndex,
   onTurnParseError?: (turnId: string, error: unknown) => void,
 ): Session | null {
   if (turns.length === 0) return null;
@@ -284,7 +322,7 @@ function buildXcodeSession(
       continue;
     }
 
-    const request = processTurn(turns, i, turn, turnData);
+    const request = processTurn(turns, i, turn, turnData, editLocIndex);
     if (request) requests.push(request);
   }
 
@@ -303,7 +341,7 @@ function buildXcodeSession(
   });
 }
 
-export function parseXcodeDatabases(xcodeBase: string): Session[] {
+export function parseXcodeDatabases(xcodeBase: string, editLocIndex?: EditLocIndex): Session[] {
   const sessions: Session[] = [];
   const dbFiles = findXcodeDbFiles(xcodeBase);
 
@@ -341,7 +379,7 @@ export function parseXcodeDatabases(xcodeBase: string): Session[] {
         continue;
       }
 
-      const session = buildXcodeSession(conv, turns, (turnId, error) => {
+      const session = buildXcodeSession(conv, turns, editLocIndex, (turnId, error) => {
         console.debug(`Failed to parse turn data for turn ${turnId}:`, error instanceof Error ? error.message : error);
       });
       if (session) sessions.push(session);
@@ -352,7 +390,10 @@ export function parseXcodeDatabases(xcodeBase: string): Session[] {
 }
 
 /** Async version with per-conversation yields and non-blocking sqlite3 queries. */
-export async function parseXcodeDatabasesAsync(xcodeBase: string): Promise<Session[]> {
+export async function parseXcodeDatabasesAsync(
+  xcodeBase: string,
+  editLocIndex?: EditLocIndex,
+): Promise<Session[]> {
   const sessions: Session[] = [];
   const dbFiles = findXcodeDbFiles(xcodeBase);
 
@@ -376,7 +417,7 @@ export async function parseXcodeDatabasesAsync(xcodeBase: string): Promise<Sessi
         turns = await sqliteQueryTurnsAsync(dbPath, conv.id);
       } catch { continue; }
 
-      const session = buildXcodeSession(conv, turns);
+      const session = buildXcodeSession(conv, turns, editLocIndex);
       if (session) sessions.push(session);
 
       // Yield between conversations so the event loop stays responsive

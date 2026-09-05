@@ -26,10 +26,10 @@ test.describe('Output', () => {
     expect(content).toMatch(/14[.,]?5/);
   });
 
-  test('shows AI ratio', async ({ page }) => {
+  test('shows gross and net AI LoC', async ({ page }) => {
     const content = await page.textContent('#content');
-    // Production tab shows AI-Generated LoC and cost
     expect(content).toContain('AI-Generated LoC');
+    expect(content).toContain('Net AI LoC');
   });
 
   test('shows language breakdown chart', async ({ page }) => {
@@ -41,8 +41,9 @@ test.describe('Output', () => {
   test('renders token usage tab with model totals', async ({ page }) => {
     // The Consumption / AI Credits tabs were consolidated into "Token Usage".
     const tabs = page.locator('#output-tabs .tab');
-    const tokenTab = tabs.filter({ hasText: /token usage/i });
-    await tokenTab.first().click();
+    const tokenUsageTab = tabs.filter({ hasText: /token usage/i });
+    test.skip(await tokenUsageTab.count() === 0, 'Token usage is gated by FF_TOKEN_REPORTING_ENABLED');
+    await tokenUsageTab.first().click();
     await page.waitForFunction(() => {
       const content = document.getElementById('content');
       return content && !content.querySelector('.loading-spinner');
@@ -54,8 +55,9 @@ test.describe('Output', () => {
 
   test('shows token usage tab with token totals', async ({ page }) => {
     const tabs = page.locator('#output-tabs .tab');
-    const tokenTab = tabs.filter({ hasText: /token usage/i });
-    await tokenTab.first().click();
+    const tokenUsageTab = tabs.filter({ hasText: /token usage/i });
+    test.skip(await tokenUsageTab.count() === 0, 'Token usage is gated by FF_TOKEN_REPORTING_ENABLED');
+    await tokenUsageTab.first().click();
     await page.waitForFunction(() => {
       const content = document.getElementById('content');
       return content && !content.querySelector('.loading-spinner');

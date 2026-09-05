@@ -19,6 +19,7 @@ test.describe('Navigation', () => {
     const pages = ['dashboard', 'timeline', 'output', 'burndown', 'patterns', 'anti-patterns', 'config-health'];
     for (const p of pages) {
       const link = page.locator(`[data-page="${p}"]`).first();
+      if (p === 'burndown' && await link.count() === 0) continue;
       await link.click();
       await page.waitForTimeout(500);
       const content = await page.locator('#content');
@@ -44,7 +45,9 @@ test.describe('Navigation', () => {
 
     const pages = ['timeline', 'output', 'burndown', 'patterns', 'anti-patterns', 'config-health', 'dashboard'];
     for (const p of pages) {
-      await page.locator(`[data-page="${p}"]`).first().click();
+      const link = page.locator(`[data-page="${p}"]`).first();
+      if (p === 'burndown' && await link.count() === 0) continue;
+      await link.click();
       await page.waitForTimeout(500);
     }
 

@@ -8,6 +8,9 @@
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { loadSessionFromDisk } from '../core/cache';
+import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+import { loadGitHubAppMetrics } from '../core/github-app-analytics';
+import { loadGitHubAppIssueCredits } from '../core/github-app-issue-credits';
 import { extractSessionImages } from '../core/parser-vscode-files';
 import { DateFilter, RpcMethodName, BurndownConfig } from '../core/types';
 import type { RpcMethodMap, RpcResult } from '../core/types/rpc-types';
@@ -39,7 +42,8 @@ import { compileNaturalLanguageRule } from '../core/rule-compiler';
 import type { SessionRequest, Session } from '../core/types';
 import { errorResult, isString, isNumber, isOptionalString, isRecord } from './panel-shared';
 import { DSL_CHEATSHEET } from './dsl-cheatsheet';
-import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+import { getRequestLoc } from '../core/analyzer-base';
+import type { EditLocIndex } from '../core/edit-loc-diff';
 
 /**
  * Pick `reqs` or `sessions` based on scope and return them typed as
@@ -158,7 +162,7 @@ function firstNonEmptyText(...values: unknown[]): string {
   return '';
 }
 
-function buildOccurrenceSessionSummary(session: Session): {
+function buildOccurrenceSessionSummary(session: Session, editLocIndex: EditLocIndex): {
   sessionId: string;
   workspaceName: string;
   requestCount: number;
@@ -181,7 +185,7 @@ function buildOccurrenceSessionSummary(session: Session): {
     firstReferencedFiles: firstReq?.referencedFiles?.slice(0, 5) || [],
     firstAgentMode: firstReq?.agentMode || '',
     firstSlashCommand: firstReq?.slashCommand || '',
-    totalAiLoc: session.requests.reduce((sum, r) => sum + (r.aiCode?.reduce((s, c) => s + (c.loc || 0), 0) || 0), 0),
+    totalAiLoc: session.requests.reduce((sum, request) => sum + getRequestLoc(request, editLocIndex), 0),
     modelsUsed: [...new Set(session.requests.map(r => r.modelId).filter(Boolean))].slice(0, 5),
     messagePreviews: session.requests.slice(0, 5).map(r => spotlight(firstNonEmptyText(r.messageText).substring(0, 120))),
   };
@@ -723,6 +727,8 @@ const rpcHandlers: TypedRpcHandlers = {
   getParserPreview: (a, _p, params) => a.getParserPreview(typeof params?.focusField === 'string' ? params.focusField : undefined),
   getWorkflowOptimization: (a, _p, params) => a.getWorkflowOptimization(validateDateFilter(params)),
   getStats: (a, _p, params) => a.getStats(validateDateFilter(params)),
+  getGitHubAppMetrics: () => loadGitHubAppMetrics(),
+  getGitHubAppIssueCredits: () => loadGitHubAppIssueCredits(),
   getConfigHealth: (a, _p, params) => a.getConfigHealth(validateDateFilter(params)),
   getInsights: (a, _p, params) => a.getInsights(validateDateFilter(params)),
   getFlowState: (a, _p, params) => a.getFlowState(validateDateFilter(params)),
@@ -930,7 +936,7 @@ const rpcHandlers: TypedRpcHandlers = {
     }
   },
 
-  explainOccurrence: async (a, _p, params) => {
+  explainOccurrence: async (a, parseResult, params) => {
     const ruleId = isString(params?.ruleId) ? params.ruleId : '';
     const sessionId = isString(params?.sessionId) ? params.sessionId : '';
     if (!ruleId || !sessionId) return { ok: false, explanation: '', error: 'Missing ruleId or sessionId' };
@@ -942,7 +948,7 @@ const rpcHandlers: TypedRpcHandlers = {
       const session = a.filterSessions(filter).find(s => s.sessionId === sessionId);
       if (!session) return { ok: false, explanation: '', error: 'Session not found' };
 
-      const sessionSummary = buildOccurrenceSessionSummary(session);
+      const sessionSummary = buildOccurrenceSessionSummary(session, parseResult.editLocIndex);
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const vscode = require('vscode') as typeof import('vscode');

@@ -14,6 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Session, Workspace } from './types';
+import { EditLoc, EditLocIndex } from './edit-loc-diff';
 import { warnCore } from './log';
 import { parseSessionFile } from './parser-vscode';
 import { parseCLIEventsFile } from './parser-vscode-cli';
@@ -22,7 +23,7 @@ import { stripSingleSession } from './parser-shared';
 export interface ParseResult {
   workspaces: Map<string, Workspace>;
   sessions: Session[];
-  editLocIndex: Map<string, Map<string, number>>;
+  editLocIndex: EditLocIndex;
   sessionSourceIndex: Map<string, SessionSource>;
   /** Counts of session files / lines the parser had to skip. Surfaced as a post-load banner so a
    *  partial parse is discoverable. Absent on cold disk-cache restores (no parse ran). */
@@ -57,11 +58,24 @@ function dirFingerprint(dirPath: string, countDirs = false): { count: number; mt
   try {
     const st = fs.statSync(dirPath);
     if (!st.isDirectory()) return { count: 0, mtime: 0 };
-    const entries = fs.readdirSync(dirPath);
-    const count = countDirs
-      ? entries.length  // editingSessions: everything is a dir, count all
-      : entries.filter(n => n.endsWith('.json') || n.endsWith('.jsonl')).length;
-    return { count, mtime: st.mtimeMs };
+    if (!countDirs) {
+      const entries = fs.readdirSync(dirPath);
+      return {
+        count: entries.filter(name => name.endsWith('.json') || name.endsWith('.jsonl')).length,
+        mtime: st.mtimeMs,
+      };
+    }
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+      .filter(entry => entry.isDirectory());
+    let mtime = st.mtimeMs;
+    for (const entry of entries) {
+      try {
+        mtime = Math.max(mtime, fs.statSync(path.join(dirPath, entry.name, 'state.json')).mtimeMs);
+      } catch {
+        // A partially written editing-session directory may not have state.json yet.
+      }
+    }
+    return { count: entries.length, mtime };
   } catch {
     return { count: 0, mtime: 0 };
   }
@@ -75,11 +89,27 @@ async function dirFingerprintAsync(dirPath: string, countDirs = false): Promise<
   try {
     const st = await fs.promises.stat(dirPath);
     if (!st.isDirectory()) return { count: 0, mtime: 0 };
-    const entries = await fs.promises.readdir(dirPath);
-    const count = countDirs
-      ? entries.length
-      : entries.filter(n => n.endsWith('.json') || n.endsWith('.jsonl')).length;
-    return { count, mtime: st.mtimeMs };
+    if (!countDirs) {
+      const entries = await fs.promises.readdir(dirPath);
+      return {
+        count: entries.filter(name => name.endsWith('.json') || name.endsWith('.jsonl')).length,
+        mtime: st.mtimeMs,
+      };
+    }
+    const entries = (await fs.promises.readdir(dirPath, { withFileTypes: true }))
+      .filter(entry => entry.isDirectory());
+    let mtime = st.mtimeMs;
+    const BATCH_SIZE = 128;
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const stats = await Promise.allSettled(
+        entries.slice(i, i + BATCH_SIZE)
+          .map(entry => fs.promises.stat(path.join(dirPath, entry.name, 'state.json'))),
+      );
+      for (const result of stats) {
+        if (result.status === 'fulfilled') mtime = Math.max(mtime, result.value.mtimeMs);
+      }
+    }
+    return { count: entries.length, mtime };
   } catch {
     return { count: 0, mtime: 0 };
   }
@@ -96,7 +126,7 @@ const CACHE_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '', '
 const CACHE_FILE = path.join(CACHE_DIR, 'parsed.json');
 const CACHE_META = path.join(CACHE_DIR, 'meta.json');
 
-const CACHE_VERSION = 9;
+const CACHE_VERSION = 12;
 
 /** Refuse to JSON.parse cache files beyond these sizes: a corrupted (or
  *  tampered) cache must degrade to a full re-parse, not OOM the host. */
@@ -111,7 +141,7 @@ interface CacheMetaPayload {
 interface SerializedCachePayload {
   workspaces: Array<[string, Workspace]>;
   sessions: Session[];
-  editLocIndex: Array<[string, Array<[string, number]>]>;
+  editLocIndex: Array<[string, Array<[string, EditLoc]>]>;
   sessionSourceIndex: Array<[string, SessionSource]>;
 }
 
@@ -135,7 +165,7 @@ function readSerializedCachePayload(value: unknown): SerializedCachePayload | nu
   return {
     workspaces: value.workspaces as Array<[string, Workspace]>,
     sessions: value.sessions as Session[],
-    editLocIndex: value.editLocIndex as Array<[string, Array<[string, number]>]>,
+    editLocIndex: value.editLocIndex as Array<[string, Array<[string, EditLoc]>]>,
     sessionSourceIndex: Array.isArray(value.sessionSourceIndex)
       ? value.sessionSourceIndex as Array<[string, SessionSource]>
       : [],
@@ -289,7 +319,7 @@ export async function loadCacheData(): Promise<CacheData | null> {
     // Yield after parse to let the event loop breathe
     await new Promise<void>(r => setTimeout(r, 0));
     const workspaces = new Map<string, Workspace>(raw.workspaces);
-    const editLocIndex = new Map<string, Map<string, number>>();
+    const editLocIndex: EditLocIndex = new Map();
     for (const [k, v] of raw.editLocIndex) {
       editLocIndex.set(k, new Map(v));
     }

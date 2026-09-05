@@ -29,6 +29,55 @@ export function fileUriToPath(raw: string): string {
   return p;
 }
 
+/* ---- Language helpers ---- */
+
+/**
+ * Canonical language names for fenced code block labels. Shared with `languageFromFile` so LoC
+ * derived from code blocks and LoC derived from file edits land in the same bucket.
+ */
+export const LANG_ALIASES: Record<string, string> = {
+  sh: 'bash', shell: 'bash', zsh: 'bash',
+  ts: 'typescript', tsx: 'typescript',
+  js: 'javascript', jsx: 'javascript',
+  py: 'python', python3: 'python',
+  cs: 'csharp', 'c#': 'csharp',
+  yml: 'yaml', md: 'markdown',
+  tf: 'terraform', rs: 'rust', rb: 'ruby',
+  jsonc: 'json', jsonl: 'json',
+  txt: 'text', plaintext: 'text', env: 'dotenv',
+};
+
+/** File extension (lowercase) -> canonical language name used across analytics. */
+export const EXT_LANG_MAP: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  py: 'python', rb: 'ruby', rs: 'rust', go: 'go', java: 'java',
+  cs: 'csharp', cpp: 'c++', c: 'c', h: 'c', hpp: 'c++', swift: 'swift',
+  kt: 'kotlin', scala: 'scala', php: 'php', dart: 'dart', lua: 'lua',
+  r: 'r', sql: 'sql', sh: 'bash', bash: 'bash', zsh: 'bash', ps1: 'powershell',
+  html: 'html', css: 'css', scss: 'scss', vue: 'vue', svelte: 'svelte',
+  md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+  tf: 'terraform', bicep: 'bicep', dockerfile: 'docker',
+};
+
+/** Canonical language name for an extension, or null when the extension is unknown. */
+export function extToLang(ext: string): string | null {
+  return EXT_LANG_MAP[ext] || null;
+}
+
+/**
+ * Canonical language name for a file path or URI. Falls back to the bare extension so
+ * unrecognized file types still group together, and matches the labels produced by fenced
+ * code blocks so both LoC sources land in the same bucket.
+ */
+export function languageFromFile(file: string): string {
+  const base = file.replaceAll('\\', '/').split('/').pop() ?? '';
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0) return EXT_LANG_MAP[base.toLowerCase()] ?? 'unknown';
+  const ext = base.slice(dot + 1).toLowerCase();
+  return EXT_LANG_MAP[ext] ?? LANG_ALIASES[ext] ?? ext;
+}
+
 /* ---- Date helpers ---- */
 export function toDateStr(ts: number): string {
   const d = new Date(ts);
@@ -293,4 +342,26 @@ export function classifyWorkType(msg: string): WorkType {
     if (re.test(msg)) return wt;
   }
   return 'other';
+}
+
+/**
+ * Harness-injected session-start payloads that are recorded as `user` messages
+ * but are not real user prompts (e.g. Codex injects the repo `AGENTS.md` and
+ * environment/instruction context at session start). These should be treated as
+ * noise so they don't get clustered into workflow/skill recommendations.
+ *
+ * Matches a small set of known leading markers only — deliberately NOT a generic
+ * `#` markdown header or `<tag>` rule, both of which would suppress legitimate
+ * user prompts.
+ */
+const HARNESS_INJECTED_MARKERS: RegExp[] = [
+  /^# AGENTS\.md instructions\b/,
+  /^<environment_context\b/,
+  /^<INSTRUCTIONS\b/,
+  /^<user_instructions\b/,
+];
+
+export function isHarnessInjectedContext(text: string): boolean {
+  const t = text.trimStart();
+  return HARNESS_INJECTED_MARKERS.some(re => re.test(t));
 }

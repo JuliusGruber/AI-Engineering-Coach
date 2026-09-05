@@ -10,12 +10,14 @@ import { Workspace, Session } from './types';
 import { findClaudeDirs, parseClaudeSessions, parseClaudeSessionsAsync } from './parser-claude';
 import { findCodexDirs, parseCodexSessions } from './parser-codex';
 import { findOpenCodeDirs, parseOpenCodeSessions } from './parser-opencode';
+import { EditLocIndex } from './edit-loc-diff';
 
 type WorkspaceMap = Map<string, Workspace>;
 
 interface HarnessCollectionContext {
   workspaces: WorkspaceMap;
   sessions: Session[];
+  editLocIndex: EditLocIndex;
 }
 
 interface ExternalHarnessCollector {
@@ -37,7 +39,7 @@ const EXTERNAL_HARNESSES: ExternalHarnessCollector[] = [
     name: 'Claude Code',
     collectSync(ctx) {
       for (const claudeDir of findClaudeDirs()) {
-        for (const { sessions } of parseClaudeSessions(claudeDir)) {
+        for (const { sessions } of parseClaudeSessions(claudeDir, ctx.editLocIndex)) {
           for (const session of sessions) addSession(ctx.workspaces, ctx.sessions, session, claudeDir);
         }
       }
@@ -46,7 +48,7 @@ const EXTERNAL_HARNESSES: ExternalHarnessCollector[] = [
       for (const claudeDir of findClaudeDirs()) {
         const results = await parseClaudeSessionsAsync(claudeDir, (idx, total, name) => {
           reportDetail?.(`${idx}/${total}: ${name}`);
-        });
+        }, ctx.editLocIndex);
         for (const { sessions } of results) {
           for (const session of sessions) addSession(ctx.workspaces, ctx.sessions, session, claudeDir);
         }
@@ -57,7 +59,7 @@ const EXTERNAL_HARNESSES: ExternalHarnessCollector[] = [
     name: 'Codex CLI',
     collectSync(ctx) {
       for (const codexDir of findCodexDirs()) {
-        for (const session of parseCodexSessions(codexDir)) addSession(ctx.workspaces, ctx.sessions, session, codexDir);
+        for (const session of parseCodexSessions(codexDir, ctx.editLocIndex)) addSession(ctx.workspaces, ctx.sessions, session, codexDir);
       }
     },
   },
@@ -65,7 +67,7 @@ const EXTERNAL_HARNESSES: ExternalHarnessCollector[] = [
     name: 'OpenCode',
     collectSync(ctx) {
       for (const ocDir of findOpenCodeDirs()) {
-        for (const session of parseOpenCodeSessions(ocDir)) addSession(ctx.workspaces, ctx.sessions, session, ocDir);
+        for (const session of parseOpenCodeSessions(ocDir, ctx.editLocIndex)) addSession(ctx.workspaces, ctx.sessions, session, ocDir);
       }
     },
   },
@@ -91,8 +93,12 @@ export function hasExternalHarnessSources(): boolean {
   return findClaudeDirs().length > 0 || findCodexDirs().length > 0 || findOpenCodeDirs().length > 0;
 }
 
-export function collectExternalHarnessesSync(workspaces: WorkspaceMap, sessions: Session[]): void {
-  const ctx: HarnessCollectionContext = { workspaces, sessions };
+export function collectExternalHarnessesSync(
+  workspaces: WorkspaceMap,
+  sessions: Session[],
+  editLocIndex: EditLocIndex,
+): void {
+  const ctx: HarnessCollectionContext = { workspaces, sessions, editLocIndex };
   for (const harness of EXTERNAL_HARNESSES) {
     harness.collectSync(ctx);
   }
@@ -111,9 +117,10 @@ export const EXTERNAL_HARNESS_SET = new Set<string>([
 export async function collectExternalHarnessesAsync(
   workspaces: WorkspaceMap,
   sessions: Session[],
+  editLocIndex: EditLocIndex,
   handlers: ExternalHarnessProgressHandlers = {},
 ): Promise<void> {
-  const ctx: HarnessCollectionContext = { workspaces, sessions };
+  const ctx: HarnessCollectionContext = { workspaces, sessions, editLocIndex };
   const total = EXTERNAL_HARNESSES.length;
 
   for (let index = 0; index < EXTERNAL_HARNESSES.length; index++) {

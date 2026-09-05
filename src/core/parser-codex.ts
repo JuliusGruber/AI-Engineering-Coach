@@ -22,7 +22,16 @@ import * as path from 'path';
 import { StringDecoder } from 'string_decoder';
 import { ModelUsage, Session, SessionRequest } from './types';
 import { assertTrustedPath, createRequest, createSession, detectDevcontainerFromRequests, extractSkillNameFromPath, extractSkillPathsFromText } from './parser-shared';
-import { canonicalizeReasoningEffort, extractReasoningEffortFromModelId } from './helpers';
+import { canonicalizeReasoningEffort, extractReasoningEffortFromModelId, isHarnessInjectedContext } from './helpers';
+import { EditLocIndex } from './edit-loc-diff';
+import {
+  FileEditLocMap,
+  mergeFileEditLoc,
+  mergeRequestEditLoc,
+  parseApplyPatch,
+  recordContentReplacement,
+  recordCreatedContent,
+} from './edit-tool-diff';
 
 interface CodexLine {
   type: string;
@@ -62,12 +71,21 @@ interface CodexParseState {
   curTotalOutput: number;
   curTotalCachedInput: number;
   hasTokenData: boolean;
+  sessionId: string;
+  currentEditLocs: FileEditLocMap;
+  editLocIndex?: EditLocIndex;
+  pendingToolEdits: Map<string, PendingCodexEdit>;
+}
+
+interface PendingCodexEdit {
+  editLocs: FileEditLocMap;
+  editedFiles: string[];
 }
 
 /** Tool names (lowercase) that actually write/edit files. */
 const CODEX_WRITE_TOOLS = new Set([
   'write', 'write_file', 'create_file', 'edit', 'edit_file',
-  'apply_diff', 'patch', 'multi_edit', 'create', 'overwrite',
+  'apply_diff', 'apply_patch', 'patch', 'multi_edit', 'create', 'overwrite',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -117,7 +135,7 @@ function projectNameFromCwd(cwd: string): string {
   return cwd.replaceAll('\\', '/').replace(/\/+$/, '').split('/').pop() || 'unknown';
 }
 
-function createCodexState(initialModel: string): CodexParseState {
+function createCodexState(initialModel: string, editLocIndex?: EditLocIndex): CodexParseState {
   return {
     requests: [],
     firstTs: null,
@@ -138,6 +156,10 @@ function createCodexState(initialModel: string): CodexParseState {
     curTotalOutput: 0,
     curTotalCachedInput: 0,
     hasTokenData: false,
+    sessionId: '',
+    currentEditLocs: new Map(),
+    editLocIndex,
+    pendingToolEdits: new Map(),
   };
 }
 
@@ -181,8 +203,14 @@ function isTurnEmpty(state: CodexParseState): boolean {
     && state.curTotalOutput === state.prevTotalOutput;
 }
 
+function commitCodexEdit(state: CodexParseState, pending: PendingCodexEdit): void {
+  mergeFileEditLoc(state.currentEditLocs, pending.editLocs);
+  state.currentEditedFiles.push(...pending.editedFiles);
+}
+
 function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
   if (!state.currentUserMessage && state.currentAssistantTexts.length === 0) return;
+  state.pendingToolEdits.clear();
 
   const responseText = state.currentAssistantTexts.join('\n');
   const reqPromptTokens = state.hasTokenData && state.curTotalInput > state.prevTotalInput
@@ -194,8 +222,9 @@ function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
   state.prevTotalInput = state.curTotalInput;
   state.prevTotalOutput = state.curTotalOutput;
 
+  const requestId = `${state.sessionId || 'unknown'}:codex:${state.requests.length}`;
   state.requests.push(createRequest({
-    requestId: `codex-${state.requests.length}`,
+    requestId,
     timestamp: state.turnStartTs,
     messageText: state.currentUserMessage,
     responseText,
@@ -212,6 +241,7 @@ function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
     completionTokens: reqCompletionTokens,
     reasoningEffort: state.turnEffort ?? extractReasoningEffortFromModelId(state.turnModel || defaultModel),
   }));
+  mergeRequestEditLoc(state.editLocIndex, requestId, state.currentEditLocs);
 
   state.currentUserMessage = '';
   state.currentAssistantTexts = [];
@@ -221,6 +251,7 @@ function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
   state.currentSkillsUsed = [];
   state.turnStartTs = null;
   state.turnCanceled = false;
+  state.currentEditLocs = new Map();
 }
 
 function extractContentItems(value: unknown): CodexContentItem[] {
@@ -266,8 +297,74 @@ function extractFilePath(args: Record<string, unknown> | null | undefined): stri
   return null;
 }
 
+function recordCodexWrite(
+  toolName: string,
+  rawArguments: unknown,
+  args: Record<string, unknown> | null,
+): PendingCodexEdit {
+  const pending: PendingCodexEdit = { editLocs: new Map(), editedFiles: [] };
+  const toolLower = toolName.toLowerCase();
+  if (!CODEX_WRITE_TOOLS.has(toolLower)) return pending;
+
+  if (toolLower === 'apply_patch' || toolLower === 'apply_diff' || toolLower === 'patch') {
+    const patch = typeof rawArguments === 'string' && !args
+      ? rawArguments
+      : stringValue(args?.patch) || stringValue(args?.input);
+    const patchEdits = parseApplyPatch(patch);
+    mergeFileEditLoc(pending.editLocs, patchEdits);
+    pending.editedFiles.push(...patchEdits.keys());
+    return pending;
+  }
+
+  const filePath = extractFilePath(args);
+  if (!filePath) return pending;
+  pending.editedFiles.push(filePath);
+
+  const previous = stringValue(args?.old_string) || stringValue(args?.old_str);
+  const next = stringValue(args?.new_string) || stringValue(args?.new_str);
+  if (previous || next) {
+    recordContentReplacement(pending.editLocs, filePath, previous, next);
+    return pending;
+  }
+  const content = stringValue(args?.content) || stringValue(args?.file_text) || stringValue(args?.text);
+  if (content) recordCreatedContent(pending.editLocs, filePath, content);
+  return pending;
+}
+
+function codexCallId(payload: Record<string, unknown>): string {
+  return stringValue(payload.call_id) || stringValue(payload.callId);
+}
+
+function queueCodexWrite(
+  toolName: string,
+  rawArguments: unknown,
+  args: Record<string, unknown> | null,
+  callId: string,
+  state: CodexParseState,
+): void {
+  const pending = recordCodexWrite(toolName, rawArguments, args);
+  if (pending.editedFiles.length === 0) return;
+  if (callId) state.pendingToolEdits.set(callId, pending);
+  else commitCodexEdit(state, pending);
+}
+
+function handleCodexToolOutput(payload: Record<string, unknown>, state: CodexParseState): void {
+  const callId = codexCallId(payload);
+  const pending = state.pendingToolEdits.get(callId);
+  if (!pending) return;
+  const output = recordValue(payload.output);
+  const success = typeof payload.success === 'boolean' ? payload.success
+    : typeof output?.success === 'boolean' ? output.success
+      : true;
+  if (success) commitCodexEdit(state, pending);
+  state.pendingToolEdits.delete(callId);
+}
+
 function handleUserMessageEvent(payload: Record<string, unknown>, state: CodexParseState, ts: number | null, defaultModel: string): void {
   const newMessage = stringValue(payload.message) || stringValue(payload.text);
+  // Harness-injected session-start context is recorded as a user message but is
+  // not a real prompt; ignore it before flushing or mutating turn state.
+  if (isHarnessInjectedContext(newMessage)) return;
   if (state.currentUserMessage && state.currentUserMessage === newMessage && isTurnEmpty(state)) {
     if (state.turnStartTs == null) state.turnStartTs = ts;
     return;
@@ -282,12 +379,12 @@ function handleFunctionCallEvent(payload: Record<string, unknown>, state: CodexP
   const toolName = stringValue(payload.name) || 'unknown';
   state.currentToolsUsed.push(toolName);
 
-  const args = recordValue(payload.arguments);
+  const rawArguments = payload.arguments;
+  const args = typeof rawArguments === 'string'
+    ? parseJsonRecord(rawArguments)
+    : recordValue(rawArguments) ?? null;
   collectSkillsFromArgs(args, state);
-
-  if (!CODEX_WRITE_TOOLS.has(toolName.toLowerCase())) return;
-  const filePath = extractFilePath(args);
-  if (filePath) state.currentEditedFiles.push(filePath);
+  queueCodexWrite(toolName, rawArguments, args, codexCallId(payload), state);
 }
 
 function handleAssistantMessageEvent(payload: Record<string, unknown>, state: CodexParseState): void {
@@ -328,6 +425,10 @@ function handleEventMsg(payload: Record<string, unknown>, state: CodexParseState
     handleTokenCountEvent(payload, state);
     return;
   }
+  if (eventType === 'function_call_output' || eventType === 'custom_tool_call_output') {
+    handleCodexToolOutput(payload, state);
+    return;
+  }
   if (eventType === 'turn_aborted') state.turnCanceled = true;
 }
 
@@ -342,7 +443,7 @@ function handleTurnContext(payload: Record<string, unknown>, state: CodexParseSt
 
 function handleUserResponseItem(payload: Record<string, unknown>, state: CodexParseState, ts: number | null, defaultModel: string): void {
   for (const item of extractContentItems(payload.content)) {
-    if (item.type !== 'input_text' || !item.text || item.text.startsWith('<')) continue;
+    if (item.type !== 'input_text' || !item.text || item.text.startsWith('<') || isHarnessInjectedContext(item.text)) continue;
     if (!state.currentUserMessage) {
       flushCodexTurn(state, defaultModel);
       state.currentUserMessage = item.text;
@@ -363,14 +464,20 @@ function handleFunctionCallResponseItem(payload: Record<string, unknown>, state:
 
   state.currentToolsUsed.push(toolName);
 
-  const args = typeof payload.arguments === 'string'
-    ? parseJsonRecord(payload.arguments)
-    : recordValue(payload.arguments);
+  const rawArguments = payload.arguments;
+  const args = typeof rawArguments === 'string'
+    ? parseJsonRecord(rawArguments)
+    : recordValue(rawArguments) ?? null;
   collectSkillsFromArgs(args, state);
+  queueCodexWrite(toolName, rawArguments, args, codexCallId(payload), state);
+}
 
-  if (!CODEX_WRITE_TOOLS.has(toolName.toLowerCase())) return;
-  const filePath = extractFilePath(args);
-  if (filePath) state.currentEditedFiles.push(filePath);
+function handleCustomToolCallResponseItem(payload: Record<string, unknown>, state: CodexParseState): void {
+  const toolName = stringValue(payload.name);
+  if (!toolName) return;
+  state.currentToolsUsed.push(toolName);
+  const input = stringValue(payload.input);
+  queueCodexWrite(toolName, input, null, codexCallId(payload), state);
 }
 
 function handleResponseItem(payload: Record<string, unknown>, state: CodexParseState, ts: number | null, defaultModel: string): void {
@@ -385,6 +492,10 @@ function handleResponseItem(payload: Record<string, unknown>, state: CodexParseS
     return;
   }
   if (itemType === 'function_call') handleFunctionCallResponseItem(payload, state);
+  else if (itemType === 'custom_tool_call') handleCustomToolCallResponseItem(payload, state);
+  else if (itemType === 'function_call_output' || itemType === 'custom_tool_call_output') {
+    handleCodexToolOutput(payload, state);
+  }
 }
 
 function updateSessionMeta(line: CodexLine, meta: CodexSessionMeta): void {
@@ -401,6 +512,7 @@ function updateSessionMeta(line: CodexLine, meta: CodexSessionMeta): void {
 
 function handleCodexLine(line: CodexLine, state: CodexParseState, meta: CodexSessionMeta): void {
   updateSessionMeta(line, meta);
+  state.sessionId = meta.sessionId;
   const ts = line.timestamp ? new Date(line.timestamp).getTime() : null;
   updateTimestamps(state, ts);
 
@@ -460,12 +572,12 @@ export function findCodexDirs(): string[] {
   return dirs;
 }
 
-export function parseCodexSessions(sessionsDir: string): Session[] {
+export function parseCodexSessions(sessionsDir: string, editLocIndex?: EditLocIndex): Session[] {
   const sessions: Session[] = [];
   const files = findAllJsonlFiles(sessionsDir);
 
   for (const filePath of files) {
-    const session = parseCodexSessionFile(filePath);
+    const session = parseCodexSessionFile(filePath, editLocIndex);
     if (session) sessions.push(session);
   }
 
@@ -490,10 +602,16 @@ function findAllJsonlFiles(dir: string): string[] {
   return result;
 }
 
-function parseCodexSessionFile(filePath: string): Session | null {
+function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIndex): Session | null {
   assertTrustedPath(filePath);
-  const meta: CodexSessionMeta = { sessionId: '', cwd: '', source: '', model: '' };
-  const state = createCodexState('');
+  const meta: CodexSessionMeta = {
+    sessionId: path.basename(filePath, '.jsonl'),
+    cwd: '',
+    source: '',
+    model: '',
+  };
+  const state = createCodexState('', editLocIndex);
+  state.sessionId = meta.sessionId;
   let parsedLineCount = 0;
 
   try {
@@ -506,7 +624,7 @@ function parseCodexSessionFile(filePath: string): Session | null {
   }
 
   if (parsedLineCount === 0) return null;
-  if (!meta.sessionId) meta.sessionId = path.basename(filePath, '.jsonl');
+  state.sessionId = meta.sessionId;
 
   const wsName = projectNameFromCwd(meta.cwd);
   const wsId = `codex-${wsName}-${meta.sessionId.slice(0, 8)}`;
